@@ -42,10 +42,14 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
   session and offered by the installer (default: yes). A "compatibility" live boot entry switches the extra hardening off if your
   hardware has trouble.
 - **AppArmor**, CPU microcode, **automatic security updates** from Debian.
-- **HIDS** (`hids/`): a small file-integrity monitor written in Go with the standard library only. It watches programs, services,
+- **HIDS** (`build/hids.go`): a small file-integrity monitor written in Go with the standard library only. It watches programs, services,
   startup files, account files, SSH keys and `/boot` in real time (inotify), re-checks everything at random intervals, alerts on
   any real change (content, mode, owner, new SETUID files) and on its own being stopped. Popups come from a script that runs in
   your own session; the root daemon never talks to your desktop. It is a tripwire, not a guarantee: see the threat model.
+  **It has a deliberately neutral name:** the service is `sysctl-helper.service` and the program `/usr/libexec/systemd-sysctl-helper`,
+  so that an intruder does not see "hids" at a glance. It is **not part of systemd**: it is this project's program, built from
+  `build/hids.go`, and the HIDS Security app shows its real state. It writes only a local log
+  (`/var/log/hids.log`) and sends nothing anywhere. Use it only on systems that are yours, or where you are authorised to monitor.
 - **VPN manager** (`vv-vpn`): WireGuard front-end with a kill switch and IPv6-aware configs. Works with any WireGuard
   `.conf` (tested with ProtonVPN files).
 - **Tools:** KeePassXC (offline password manager), mat2 (metadata cleaner), Panic Mode (cut the network and power off), Lynis,

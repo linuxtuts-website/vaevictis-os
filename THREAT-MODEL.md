@@ -41,6 +41,12 @@ first use"), so it cannot tell you about a system that was already compromised b
 knows it exists and disables it before changing anything. The source is public (`build/hids.go`), so this is not a secret: use it as an
 alarm, not as a wall.
 
+**Its name.** The HIDS service is called `sysctl-helper.service` and its program `/usr/libexec/systemd-sysctl-helper` on purpose: a neutral
+name, so that an intruder skimming the process list does not stop at "hids". This is a small obstacle, not a protection, and it is stated
+here so nobody is surprised: the program is **not** part of systemd, it is built from `build/hids.go`, `systemctl status sysctl-helper`
+shows it, and `/usr/libexec/systemd-sysctl-helper -version` prints `hids` and its version. It writes only `/var/log/hids.log` (and the
+journal) on the machine it watches; it sends nothing over the network.
+
 ## Things you must trust
 
 - Debian and its archive signatures.
