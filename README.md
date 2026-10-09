@@ -27,8 +27,12 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
 
 ## What is inside
 
-- **Disk encryption in the installer:** LUKS2 on the root and `/home` partitions, random-key encrypted swap, optional separate `/home`
-  (ext4, xfs or btrfs). `/boot` stays unencrypted so GRUB can start: see the [threat model](THREAT-MODEL.md).
+- **A small, original installer** (`vaevictis_install.sh`, plain shell, no heavy framework): it copies the live system to the disk with
+  rsync. You choose the disk and design the layout yourself: size of `/`, optional separate `/home`, and any **extra mount points**
+  (`/var`, `/srv`, a data partition...) each with the filesystem you want: **ext4, xfs or btrfs** (default ext4: light and fast).
+  It also asks for your keyboard layout and whether to use the hardened boot options.
+- **Disk encryption (cryptsetup, LUKS2)** on the root and `/home` partitions, random-key encrypted swap, one passphrase typed at boot.
+  `/boot` stays unencrypted so GRUB can start: see the [threat model](THREAT-MODEL.md).
 - **Firewall (nftables):** incoming traffic dropped (SSH only if you switch it on), forwarding dropped except for virtual machines
   (libvirt), outgoing traffic **not blocked**. `sudo nft list ruleset` shows exactly what is active.
 - **Nothing listens by default.** SSH is installed and hardened (port 2299, keys only, no root, only the `sshusers` group, fail2ban)
@@ -45,8 +49,11 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
 - **VPN manager** (`vv-vpn`): WireGuard front-end with a kill switch and IPv6-aware configs. Works with any WireGuard
   `.conf` (tested with ProtonVPN files).
 - **Tools:** KeePassXC (offline password manager), mat2 (metadata cleaner), Panic Mode (cut the network and power off), Lynis,
-  uBlock Origin preinstalled in Firefox ESR, hard-link snapshots (`v-snap`), an optional NVIDIA proprietary driver installer (`vv-nvidia`).
+  uBlock Origin preinstalled in Firefox ESR, an optional NVIDIA proprietary driver installer (`vv-nvidia`).
 - **Simple desktop apps for people coming from Windows or macOS**, so you do not need to learn heavyweight tools on day one: **Aurora** (music player), **LinPaint+** (a Paint-style editor that also takes screenshots you can edit right away), **VaeVictis PDF** (`vv-pdf`: PDF viewer and page editor) and **VaeVictis XML** (`vv-xml`: small XML editor). Aurora, `vv-pdf` and `vv-xml` use no network at all.
+- **Snapshots without Timeshift** (`v-snap`): a small menu-driven tool using rsync and hard links. It takes a snapshot of the whole
+  system (without `/home`) or backs up any folder, keeps the snapshots on the system disk or on an external disk or USB stick, and only
+  changed files use new space. List, restore and delete from the same menu. Run it with `sudo v-snap`.
 - The **Welcome window** shows these settings read live from the running system, so you do not have to trust this page.
 
 ## What it does NOT do
