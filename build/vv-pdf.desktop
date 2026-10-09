@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=VaeVictis PDF Tool
+Comment=Offline PDF Viewer and Editor
+Exec=/usr/local/bin/vv-pdf
+Icon=vv-pdf
+Terminal=false
+Type=Application
+Categories=Office;Utility;

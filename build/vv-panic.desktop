@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Panic Mode
+Comment=Cut the network and power off immediately
+Exec=/usr/local/bin/vv-panic
+Icon=vv-panic
+Terminal=false
+StartupNotify=false
+Categories=System;
+Keywords=panic;emergency;shutdown;
+StartupWMClass=vv-panic
