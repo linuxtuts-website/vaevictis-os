@@ -1,0 +1,86 @@
+#!/bin/sh
+# vv-grub-theme - VaeVictis GRUB theme: the wallpaper stays, the boot menu sits in the centre, under the title.
+# Layout: the menu sits BELOW the logo in the middle of the wallpaper (left=10% top=68% width=80% height=28%);
+# checked in QEMU (BIOS and UEFI) with the 2026-10-09 wallpaper, not yet on real hardware.
+#
+#   vv-grub-theme [WALLPAPER.png]
+#
+# WALLPAPER defaults to the VaeVictis wallpaper (/usr/share/backgrounds/vaevictis.png) when it exists,
+# otherwise to the image GRUB already uses (/usr/share/images/desktop-base/desktop-grub.png).
+# Writes /boot/grub/themes/vaevictis/ (theme.txt, background.png, unicode.pf2), removes GRUB_BACKGROUND
+# (a theme replaces it), sets GRUB_THEME in /etc/default/grub and runs update-grub. Safe to run again.
+#
+# Variables: VV_ROOT=/path   work inside that root (the chroot) instead of /
+#            VV_NO_UPDATE=1  do not run update-grub
+set -eu
+
+ROOT="${VV_ROOT:-}"
+if [ -n "${1:-}" ]; then
+    SRC="$1"
+elif [ -f "$ROOT/usr/share/backgrounds/vaevictis.png" ]; then
+    SRC="$ROOT/usr/share/backgrounds/vaevictis.png"
+else
+    SRC="$ROOT/usr/share/images/desktop-base/desktop-grub.png"
+fi
+THEME="$ROOT/boot/grub/themes/vaevictis"
+DEFAULTS="$ROOT/etc/default/grub"
+FONT="$ROOT/usr/share/grub/unicode.pf2"
+
+[ -f "$SRC" ] || { echo "vv-grub-theme: no wallpaper at $SRC (give the PNG as the first argument)" >&2; exit 1; }
+[ -f "$DEFAULTS" ] || { echo "vv-grub-theme: $DEFAULTS not found" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || { echo "vv-grub-theme: run it as root (sudo)" >&2; exit 1; }
+
+install -d -m 0755 "$THEME"
+cp -fL "$SRC" "$THEME/background.png"
+
+# GRUB's own font (package grub-common). If it is missing the theme still works with GRUB's built-in font.
+FONTLINE=""
+if [ -f "$FONT" ]; then
+    cp -f "$FONT" "$THEME/unicode.pf2"
+    FONTLINE='terminal-font: "unicode"'
+else
+    rm -f "$THEME/unicode.pf2"
+    echo "vv-grub-theme: $FONT not found, using GRUB's built-in font" >&2
+fi
+
+cat > "$THEME/theme.txt" <<EOF
+# VaeVictis OS: wallpaper as it is, boot menu below the logo in the middle so it never covers it
+desktop-image: "background.png"
+title-text: ""
+# loading messages go straight on the wallpaper (full-screen transparent console, no black box)
+terminal-left: "0"
+terminal-top: "0"
+terminal-width: "100%"
+terminal-height: "100%"
+terminal-border: "0"
+$FONTLINE
+
++ boot_menu {
+    left = 10%
+    width = 80%
+    top = 68%
+    height = 28%
+    item_height = 24
+    item_spacing = 6
+    item_color = "#00b8e6"
+    selected_item_color = "#8ff3ff"
+}
+EOF
+
+# a theme replaces GRUB_BACKGROUND: drop it so the two never fight
+sed -i -E '/^#?[[:space:]]*GRUB_BACKGROUND=/d' "$DEFAULTS"
+
+# point GRUB at the theme (replace the line if there is one, add it otherwise)
+LINE='GRUB_THEME="/boot/grub/themes/vaevictis/theme.txt"'
+if grep -qE '^#?[[:space:]]*GRUB_THEME=' "$DEFAULTS"; then
+    sed -i -E "s|^#?[[:space:]]*GRUB_THEME=.*|$LINE|" "$DEFAULTS"
+else
+    printf '%s\n' "$LINE" >> "$DEFAULTS"
+fi
+
+echo "theme written to ${THEME#"$ROOT"}"
+if [ -z "${VV_NO_UPDATE:-}" ] && [ -z "$ROOT" ]; then
+    update-grub
+else
+    echo "update-grub not run (VV_ROOT or VV_NO_UPDATE is set): run it inside the system when ready"
+fi

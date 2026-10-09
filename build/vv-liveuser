@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# vv-liveuser - replace the personal user baked into the chroot with the standard live user
+#
+#   vv-liveuser            PLAN: shows exactly what would change (nothing is modified)
+#   vv-liveuser --apply    does it. A backup of every home folder is kept OUTSIDE the image.
+#
+# Result: the ISO has no personal account and root is locked. At boot, live-config creates the user
+# "user" (password "live"), logs it in automatically and gives it sudo.
+# Your GNOME look (dock, theme, wallpaper, terminal) is kept as system-wide defaults, but ONLY the
+# settings on a visible whitelist: recent files, history, location and accounts never travel.
+#
+# Variables: VV_CHROOT   chroot path
+#            VV_DCONF_DUMP_FILE  (testing) use this dconf dump instead of reading the user's settings
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+CH="${VV_CHROOT:-/run/media/user/Mio/Backup_VaeVictis_Completo/vaevictis/new/chroot}"
+CH="$(realpath -m "$CH")"
+VVC="$HERE/vv-chroot"
+APPLY=0; [ "${1:-}" = "--apply" ] && APPLY=1
+
+die() { echo "vv-liveuser: $*" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || exec sudo -E VV_CHROOT="$CH" "$0" "$@"
+[ -f "$CH/etc/debian_version" ] && [ "$CH" != "/" ] || die "not a Debian root filesystem: $CH"
+[ -x "$VVC" ] || [ -n "${VV_SKIP_CHROOT:-}" ] || die "vv-chroot must be next to this script ($VVC)"
+
+in_chroot() {
+    if [ -n "${VV_SKIP_CHROOT:-}" ]; then echo "  [skipped in test] $(echo "$1" | head -c 160)" >&2; return 0; fi
+    "$VVC" run /bin/sh -c "$1"
+}
+
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+BK="$(dirname "$CH")/vv-backups/$(date +%Y%m%d-%H%M%S)"
+
+mapfile -t USERS < <(awk -F: '$3>=1000 && $3<60000 {print $1}' "$CH/etc/passwd")
+
+echo "== Accounts in the image"
+if [ "${#USERS[@]}" -eq 0 ]; then echo "  no personal user (nothing to remove)"; fi
+SRC_USER=""; SRC_HOME=""
+for u in "${USERS[@]}"; do
+    home="$(awk -F: -v u="$u" '$1==u{print $6}' "$CH/etc/passwd")"
+    echo "  user '$u'  home $home  ($(du -sh "$CH$home" 2>/dev/null | cut -f1))"
+    echo "     top level: $(ls -A "$CH$home" 2>/dev/null | tr '\n' ' ')"
+    sens="$(cd "$CH$home" 2>/dev/null && ls -Ad .ssh .gnupg .mozilla .bash_history .cache .local/share/keyrings 2>/dev/null | tr '\n' ' ' || true)"
+    [ -z "$sens" ] || echo "     personal data that will be DELETED with the user: $sens"
+    if [ -z "$SRC_USER" ] && { [ -f "$CH$home/.config/dconf/user" ] || [ -n "${VV_DCONF_DUMP_FILE:-}" ]; }; then SRC_USER="$u"; SRC_HOME="$home"; fi
+done
+root_hash="$(awk -F: '$1=="root"{print $2}' "$CH/etc/shadow")"
+case "$root_hash" in '!'*|'*'*) echo "  root: already locked" ;; *) echo "  root: has a password hash -> will be locked (passwd -l root)" ;; esac
+NAMES_RE="$(printf '%s|' "${USERS[@]:-__none__}" | sed 's/|$//')"
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    echo "  sudoers drop-in ${f#"$CH"}: these lines name the user and will be removed (a future user with the same name would inherit them):"
+    grep -wE -- "$NAMES_RE" "$f" | sed 's/^/        /'
+done < <(grep -rlwE -- "$NAMES_RE" "$CH/etc/sudoers.d" 2>/dev/null || true)
+[ -d "$CH/etc/live" ] && echo "  existing live-config settings: $(ls "$CH/etc/live" "$CH/etc/live/config.conf.d" 2>/dev/null | tr '\n' ' ')"
+grep -Hn '^AutomaticLogin' "$CH/etc/gdm3/daemon.conf" 2>/dev/null | sed "s#$CH##; s/^/  /" || true
+
+echo
+echo "== Your GNOME look, kept as system-wide defaults (whitelist)"
+FILTERED="$TMP/defaults.ini"; : > "$FILTERED"
+if [ -n "$SRC_USER" ]; then
+    DUMP="$TMP/dump.ini"
+    if [ -n "${VV_DCONF_DUMP_FILE:-}" ]; then cp "$VV_DCONF_DUMP_FILE" "$DUMP"
+    else in_chroot "runuser -l $SRC_USER -c 'dconf dump /'" 2>/dev/null | grep -v '^clean: no mounts' > "$DUMP" || true; fi
+    CH="$CH" APPLY="$APPLY" DUMP="$DUMP" FILTERED="$FILTERED" python3 - <<'PYEND'
+import os, re, shutil, urllib.parse
+ch, apply_ = os.environ["CH"], os.environ["APPLY"] == "1"
+ALLOW = ["org/gnome/desktop/interface", "org/gnome/desktop/background", "org/gnome/desktop/screensaver",
+         "org/gnome/desktop/wm/preferences", "org/gnome/desktop/peripherals", "org/gnome/desktop/privacy",
+         "org/gnome/desktop/session", "org/gnome/mutter", "org/gnome/settings-daemon/plugins/power",
+         "org/gnome/settings-daemon/plugins/color", "org/gnome/terminal", "org/gnome/nautilus/preferences",
+         "org/gnome/gedit/preferences", "org/gnome/TextEditor"]
+SHELL_KEYS = {"favorite-apps", "enabled-extensions", "disabled-extensions", "disable-user-extensions"}
+BAD = re.compile(r"recent|history|location|last|window-state|search|geoclue|online|account", re.I)
+secs, cur = {}, None
+for line in open(os.environ["DUMP"], encoding="utf-8", errors="replace"):
+    line = line.rstrip("\n")
+    m = re.match(r"^\[(.+)\]$", line)
+    if m:
+        cur = m.group(1); secs.setdefault(cur, [])
+    elif cur is not None and "=" in line:
+        secs[cur].append(line)
+kept, dropped, wall = {}, [], []
+for name, lines in secs.items():
+    if name == "org/gnome/shell":
+        lines = [l for l in lines if l.split("=", 1)[0] in SHELL_KEYS]
+    elif not any(name == a or name.startswith(a + "/") for a in ALLOW):
+        if lines: dropped.append(name)
+        continue
+    lines = [l for l in lines if not BAD.search(l.split("=", 1)[0])]
+    out = []
+    for l in lines:
+        k, v = l.split("=", 1)
+        if k.startswith("picture-uri") and "file:///home/" in v:
+            src = urllib.parse.unquote(re.search(r"file://(/[^']+)", v).group(1))
+            base = os.path.basename(src)
+            if os.path.isfile(ch + src):
+                wall.append(src)
+                if apply_:
+                    d = os.path.join(ch, "usr/share/backgrounds/vaevictis"); os.makedirs(d, exist_ok=True)
+                    shutil.copy2(ch + src, os.path.join(d, base))
+                v = "'file:///usr/share/backgrounds/vaevictis/%s'" % urllib.parse.quote(base)
+        out.append(k + "=" + v)
+    if out: kept[name] = out
+with open(os.environ["FILTERED"], "w") as fh:
+    for name, lines in kept.items():
+        fh.write("[%s]\n%s\n\n" % (name, "\n".join(lines)))
+print("  kept %d settings groups, left out %d (everything not on the whitelist)" % (len(kept), len(dropped)))
+for name, lines in kept.items():
+    print("    [%s]  %s" % (name, ", ".join(l.split("=", 1)[0] for l in lines)[:100]))
+for w in sorted(set(wall)):
+    print("    wallpaper %s -> /usr/share/backgrounds/vaevictis/%s" % (w, os.path.basename(w)))
+if dropped:
+    print("  left out: " + ", ".join(dropped[:8]) + (" ..." if len(dropped) > 8 else ""))
+PYEND
+else
+    echo "  no personal GNOME settings found: the live user gets the stock look plus whatever /etc/skel and system defaults give"
+fi
+
+echo
+echo "== The live account (written to /etc/live/config.conf.d/10-vaevictis.conf)"
+echo "  user: user    password: live    automatic login, sudo without a password (live session only)"
+
+if [ "$APPLY" != 1 ]; then
+    echo; echo "This was only a PLAN. Nothing has been changed. If it looks right:  ./vv-liveuser --apply"
+    exit 0
+fi
+
+# ----------------------------------------------------------------------------------- APPLY
+echo; echo "== Applying"
+mkdir -p "$BK"
+for u in "${USERS[@]}"; do
+    home="$(awk -F: -v u="$u" '$1==u{print $6}' "$CH/etc/passwd")"
+    [ -d "$CH$home" ] && tar czf "$BK/home-$u.tar.gz" -C "$CH" "${home#/}" && echo "  backup of $home -> $BK/home-$u.tar.gz"
+done
+if [ -s "$FILTERED" ]; then
+    install -d -m 0755 "$CH/etc/dconf/db/vaevictis.d" "$CH/etc/dconf/profile"
+    install -m 0644 "$FILTERED" "$CH/etc/dconf/db/vaevictis.d/00-defaults"
+    if [ ! -f "$CH/etc/dconf/profile/user" ]; then
+        printf 'user-db:user\nsystem-db:vaevictis\n' > "$CH/etc/dconf/profile/user"
+    elif ! grep -q '^system-db:vaevictis' "$CH/etc/dconf/profile/user"; then
+        sed -i '0,/^user-db:user.*/s//&\nsystem-db:vaevictis/' "$CH/etc/dconf/profile/user"
+        grep -q '^system-db:vaevictis' "$CH/etc/dconf/profile/user" || printf 'system-db:vaevictis\n' >> "$CH/etc/dconf/profile/user"
+    fi
+    echo "  GNOME defaults -> /etc/dconf/db/vaevictis.d/00-defaults"
+fi
+install -d -m 0755 "$CH/etc/live/config.conf.d"
+cat > "$CH/etc/live/config.conf.d/10-vaevictis.conf" <<'EOF'
+# VaeVictis live session (generated by vv-liveuser)
+LIVE_HOSTNAME="vaevictis"
+LIVE_USERNAME="user"
+LIVE_USER_FULLNAME="VaeVictis Live User"
+EOF
+echo "  live account settings -> /etc/live/config.conf.d/10-vaevictis.conf"
+# Our own safety net: live-config's automatic login and sudo hooks cannot be inspected from here, so the live session
+# also runs this small service. ConditionKernelCommandLine=boot=live keeps it inert on an installed system.
+install -d -m 0755 "$CH/usr/local/libexec"
+cat > "$CH/usr/local/libexec/vv-live-session" <<'LIVESH'
+#!/bin/sh
+# VaeVictis live session only: automatic login and sudo for the live user.
+CONF="${VV_LIVE_CONF:-/etc/live/config.conf.d/10-vaevictis.conf}"
+GDM="${VV_GDM_DIR:-/etc/gdm3}"
+SUDOERS="${VV_SUDOERS_DIR:-/etc/sudoers.d}"
+LIVE_USERNAME=user
+LIVE_USER_FULLNAME="VaeVictis Live User"
+[ -r "$CONF" ] && . "$CONF"
+u="$LIVE_USERNAME"
+# live-config creates the live user with its user-setup hook, which does NOTHING (and says nothing) when the
+# user-setup package is not installed, while its sudo and gdm3 hooks still write the name. So create the user here
+# if it is missing. The password "live" is public on purpose.
+if ! id "$u" >/dev/null 2>&1; then
+    useradd -m -s /bin/bash -c "$LIVE_USER_FULLNAME" "$u" || exit 0
+    echo "$u:live" | chpasswd
+    for g in sudo audio video cdrom floppy plugdev netdev dip lpadmin scanner bluetooth libvirt kvm; do
+        getent group "$g" >/dev/null 2>&1 && usermod -aG "$g" "$u"
+    done
+    h="$(getent passwd "$u" | cut -d: -f6)"
+    install -d -o "$u" -g "$u" "$h/.config"
+    echo yes > "$h/.config/gnome-initial-setup-done"          # no first-run wizard for the live user
+    chown "$u:$u" "$h/.config/gnome-initial-setup-done"
+fi
+mkdir -p "$GDM"
+for f in "$GDM/daemon.conf" "$GDM/custom.conf"; do
+    [ -f "$f" ] || printf '[daemon]\n' > "$f"
+    grep -q '^\[daemon\]' "$f" || printf '[daemon]\n' >> "$f"
+    sed -i '/^#\?[[:space:]]*AutomaticLogin\(Enable\)\?[[:space:]]*=/d' "$f"
+    sed -i "/^\[daemon\]/a AutomaticLoginEnable=true\nAutomaticLogin=$u" "$f"
+done
+printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$u" > "$SUDOERS/live-vaevictis"
+chmod 0440 "$SUDOERS/live-vaevictis"
+LIVESH
+chmod 0755 "$CH/usr/local/libexec/vv-live-session"
+cat > "$CH/etc/systemd/system/vv-live-session.service" <<'UNIT'
+[Unit]
+Description=VaeVictis live session: automatic login and sudo for the live user
+ConditionKernelCommandLine=boot=live
+After=live-config.service
+Before=display-manager.service gdm.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/vv-live-session
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+echo "  live-session service -> vv-live-session.service (automatic login and sudo, live only)"
+for g in daemon.conf custom.conf; do
+    if [ -f "$CH/etc/gdm3/$g" ]; then
+        sed -i 's/^\(AutomaticLogin[A-Za-z]*[[:space:]]*=.*\)$/#\1/' "$CH/etc/gdm3/$g"
+        echo "  fixed automatic login lines in gdm3/$g (the live session sets them at boot)"
+    fi
+done
+for f in "$CH"/etc/sudoers.d/*; do
+    [ -f "$f" ] && grep -qwE -- "$NAMES_RE" "$f" || continue
+    cp -p "$f" "$BK/sudoers-$(basename "$f")"
+    sed -i -E "/(^|[^A-Za-z0-9_-])($NAMES_RE)([^A-Za-z0-9_-]|$)/d" "$f"
+    if ! grep -qvE '^[[:space:]]*(#|$)' "$f"; then rm -f "$f"; echo "  sudoers drop-in ${f#"$CH"} removed (nothing else in it)"
+    else echo "  sudoers drop-in ${f#"$CH"}: lines naming the user removed"; fi
+done
+CMDS="command -v dconf >/dev/null 2>&1 && dconf update; passwd -l root >/dev/null; systemctl enable vv-live-session.service"
+for u in "${USERS[@]}"; do CMDS="$CMDS; userdel -r $u 2>/dev/null; rm -f /var/lib/AccountsService/users/$u"; done
+in_chroot "$CMDS"
+echo "  removed: ${USERS[*]:-nobody}; root locked; dconf database updated"
+echo
+echo "Done. Next: ./vv-chroot seal, then ./vv-iso build --release, then test the boot (expect: logged in as 'user')."

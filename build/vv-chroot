@@ -1,0 +1,573 @@
+#!/usr/bin/env bash
+# vv-chroot - safe mount / run / umount wrapper for the VaeVictis build chroot
+#
+#   vv-chroot status             show mounts under the chroot
+#   vv-chroot mount | umount     manual control (umount also removes the temporary resolv.conf)
+#   vv-chroot run CMD [ARGS]     mount, run CMD inside the chroot, ALWAYS unmount afterwards
+#   vv-chroot enter              interactive shell, unmounts when you exit
+#   vv-chroot audit              read-only report of what still needs fixing (no mounts needed)
+#   vv-chroot seal               final cleanup before building the ISO (machine-id, SSH keys, history, logs...)
+#   vv-chroot lang               list lines that still contain Italian in scripts and launchers
+#   vv-chroot pkgcheck [--size]  what a fully working desktop still lacks (fonts, codecs, firmware...)
+#   vv-chroot has PKG...         is each package installed? (and which version)
+#   vv-chroot sim PKG...         how big would installing these packages be? (nothing is installed)
+#   vv-chroot login              read-only report: login screen logo, accounts, automatic login
+#
+# Override the location with:  VV_CHROOT=/other/path vv-chroot ...
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+CH="${VV_CHROOT:-/run/media/user/Mio/Backup_VaeVictis_Completo/vaevictis/new/chroot}"
+CH="$(realpath -m "$CH")"
+[ "$(id -u)" -eq 0 ] || exec sudo -E VV_CHROOT="$CH" "$0" "$@"
+
+die() { echo "vv-chroot: $*" >&2; exit 1; }
+
+sanity() {
+    [ "$CH" != "/" ] && [ -f "$CH/etc/debian_version" ] && [ -d "$CH/usr" ] \
+        || die "not a Debian root filesystem: $CH"
+}
+
+mounts() { awk -v p="$CH/" 'index($5, p) == 1 { print $5 }' /proc/self/mountinfo; }
+
+all_mounted() {
+    local d
+    for d in dev dev/pts proc sys; do mountpoint -q "$CH/$d" || return 1; done
+}
+
+holders() {   # processes whose root or working directory is inside the chroot
+    local p t found=0
+    for p in /proc/[0-9]*; do
+        for t in cwd root; do
+            case "$(readlink "$p/$t" 2>/dev/null)" in
+                "$CH"|"$CH"/*) echo "  pid ${p#/proc/}  $(cat "$p/comm" 2>/dev/null)  ($t)"; found=1; break ;;
+            esac
+        done
+    done
+    [ "$found" = 1 ] || echo "  (no process has its root or cwd there: something holds a file open)"
+}
+
+do_mount() {   # idempotent: mounts only the pieces that are missing
+    sanity
+    mountpoint -q "$CH/dev" || { mount --bind /dev "$CH/dev"; mount --make-rslave "$CH/dev"; }
+    mkdir -p "$CH/dev/pts"
+    mountpoint -q "$CH/dev/pts" || mount --bind /dev/pts "$CH/dev/pts"
+    mountpoint -q "$CH/proc"    || mount -t proc proc "$CH/proc"
+    mountpoint -q "$CH/sys"     || mount -t sysfs sys "$CH/sys"
+    if [ -L "$CH/etc/resolv.conf" ]; then    # keep a symlink safe while we borrow the host DNS
+        mv -T "$CH/etc/resolv.conf" "$CH/etc/resolv.conf.vv-orig"
+    fi
+    cp --remove-destination /etc/resolv.conf "$CH/etc/resolv.conf"
+}
+
+do_umount() {
+    sanity
+    local d
+    for d in dev proc sys; do
+        if mountpoint -q "$CH/$d"; then
+            if ! umount -R "$CH/$d" 2>/dev/null; then
+                echo "vv-chroot: $d is busy. Processes still inside the chroot:" >&2
+                holders >&2
+                echo "vv-chroot: detaching $d lazily (safe: it is a virtual file system)." >&2
+                umount -R -l "$CH/$d" || true
+            fi
+        fi
+    done
+    rm -f "$CH/etc/resolv.conf"              # never ship the host's DNS settings
+    if [ -e "$CH/etc/resolv.conf.vv-orig" ] || [ -L "$CH/etc/resolv.conf.vv-orig" ]; then
+        mv -T "$CH/etc/resolv.conf.vv-orig" "$CH/etc/resolv.conf"
+    fi
+    local left; left="$(mounts)"
+    if [ -n "$left" ]; then
+        echo "STILL MOUNTED (do NOT move or delete the chroot):" >&2
+        echo "$left" >&2
+        return 1
+    fi
+    echo "clean: no mounts left under the chroot"
+}
+
+run_inside() {                                # run_inside CMD...   (mounts if needed, always unmounts)
+    sanity
+    local we_mounted=0 rc=0
+    if ! all_mounted; then
+        [ -z "$(mounts)" ] || echo "vv-chroot: leftover partial mounts found, completing them (they are unmounted at the end)" >&2
+        do_mount; we_mounted=1
+        trap 'do_umount || true; exit 130' INT TERM
+    fi
+    local envv=(HOME=/root TERM="${TERM:-xterm}" LANG=C.UTF-8 LC_ALL=C.UTF-8
+                PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+                PS1='(vv-chroot) \w # ')
+    [ -n "${DEBIAN_FRONTEND:-}" ] && envv+=(DEBIAN_FRONTEND="$DEBIAN_FRONTEND")
+    set +e
+    chroot "$CH" /usr/bin/env -i "${envv[@]}" "$@"
+    rc=$?
+    set -e
+    if [ "$we_mounted" = 1 ]; then
+        trap - INT TERM
+        if ! do_umount; then rc=$(( rc == 0 ? 1 : rc )); fi
+    fi
+    return "$rc"
+}
+
+cmd_audit() {
+    sanity
+    set +e                                   # a report: one missing file must not stop the rest
+    local hdr p st
+    hdr() { printf '\n== %s\n' "$*"; }
+    pkg() { dpkg-query --admindir="$CH/var/lib/dpkg" -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null || true; }
+
+    hdr "Base"
+    ( . "$CH/etc/os-release" 2>/dev/null && echo "  $PRETTY_NAME" ) || true
+    echo "  size on disk: $(du -xsh "$CH" 2>/dev/null | cut -f1)"
+
+    hdr "Kernels / initramfs in /boot"
+    ls -1 "$CH/boot" 2>/dev/null | grep -E '^(vmlinuz|initrd)' | sed 's/^/  /' || echo "  none"
+    for p in vmlinuz vmlinuz.old initrd.img initrd.img.old; do
+        [ -L "$CH/$p" ] && echo "  /$p -> $(readlink "$CH/$p")"
+    done
+
+    hdr "Key packages"
+    for p in live-boot live-config live-config-systemd systemd-sysv network-manager gdm3 gnome-core \
+             nftables wireguard-tools openresolv unattended-upgrades pkexec polkitd \
+             python3-gi python3-tk python3-pil python3-pil.imagetk \
+             xdg-desktop-portal-gnome gnome-screenshot firefox-esr tor locales keyboard-configuration; do
+        st="$(pkg "$p")"
+        case "$st" in ii*) printf '  yes   %s\n' "$p" ;; *) printf '  NO    %s\n' "$p" ;; esac
+    done
+
+    hdr "Enabled services"
+    systemctl --root="$CH" list-unit-files --state=enabled --no-legend --no-pager 2>/dev/null \
+        | awk '{print "  " $1}' || echo "  (could not read)"
+
+    hdr "Accounts"
+    awk -F: '$3>=1000 && $3<60000 {print "  user: " $1 " (uid " $3 ") home=" $6}' "$CH/etc/passwd"
+    awk -F: '$1=="root" {print "  root password: " (($2 ~ /^[!*]/) ? "locked" : "SET (hash present)")}' "$CH/etc/shadow"
+    echo "  /home: $(ls -A "$CH/home" 2>/dev/null | tr '\n' ' ')"
+
+    hdr "Things that should NOT ship in an image"
+    if [ -s "$CH/etc/machine-id" ]; then
+        echo "  machine-id is set ($(cat "$CH/etc/machine-id")): empty it so every boot gets its own"
+    else
+        echo "  ok    machine-id empty/absent"
+    fi
+    if ls "$CH"/etc/ssh/ssh_host_* >/dev/null 2>&1; then
+        echo "  SSH host keys present (every copy of the ISO would share them): $(ls "$CH"/etc/ssh/ssh_host_* | wc -l) files"
+    else
+        echo "  ok    no SSH host keys"
+    fi
+    find "$CH/root" "$CH/home" -maxdepth 3 \( -name '.bash_history' -o -name '.python_history' \
+        -o -name '.viminfo' -o -name '.lesshst' \) 2>/dev/null | sed 's/^/  history file: /'
+    if [ -L "$CH/etc/resolv.conf" ]; then
+        echo "  resolv.conf is a symlink -> $(readlink "$CH/etc/resolv.conf")"
+    elif [ -s "$CH/etc/resolv.conf" ]; then
+        echo "  resolv.conf has content: $(grep -E '^nameserver' "$CH/etc/resolv.conf" | tr '\n' ' ')"
+    else
+        echo "  ok    no resolv.conf content"
+    fi
+    [ -e "$CH/var/lib/systemd/random-seed" ] && echo "  random-seed present (shared by every copy): seal removes it"
+    [ -e "$CH/var/lib/systemd/credential.secret" ] && echo "  credential.secret present (shared secret): seal removes it"
+    ls "$CH"/etc/NetworkManager/system-connections 2>/dev/null | sed 's/^/  NetworkManager profile (may hold Wi-Fi passwords): /'
+    [ -n "$(ls -A "$CH/var/lib/bluetooth" 2>/dev/null)" ] && echo "  paired Bluetooth devices stored in /var/lib/bluetooth"
+    if [ -d "$CH/etc/wireguard" ] && [ -n "$(ls -A "$CH/etc/wireguard" 2>/dev/null)" ]; then
+        echo "  WireGuard configs inside the image: $(ls "$CH/etc/wireguard" | tr '\n' ' ')  <- PRIVATE KEYS would ship"
+    fi
+    ls "$CH"/etc/apt/*.bak "$CH"/etc/apt/sources.list.d/*.bak 2>/dev/null | sed 's/^/  backup file: /' || true
+    echo "  apt cache: $(du -sh "$CH/var/cache/apt" 2>/dev/null | cut -f1), apt lists: $(du -sh "$CH/var/lib/apt/lists" 2>/dev/null | cut -f1), logs: $(du -sh "$CH/var/log" 2>/dev/null | cut -f1)"
+    [ -z "$(ls -A "$CH/tmp" 2>/dev/null)" ] || echo "  /tmp is not empty: $(ls -A "$CH/tmp" | head -5 | tr '\n' ' ')"
+
+    hdr "Locale, time zone, keyboard, hostname"
+    echo "  /etc/default/locale: $(cat "$CH/etc/default/locale" 2>/dev/null | tr '\n' ' ')"
+    echo "  locale.gen (active): $(grep -E '^[^#[:space:]]' "$CH/etc/locale.gen" 2>/dev/null | tr '\n' ' ')"
+    echo "  timezone: $(cat "$CH/etc/timezone" 2>/dev/null || readlink "$CH/etc/localtime" 2>/dev/null)"
+    echo "  keyboard: $(grep -E '^XKBLAYOUT' "$CH/etc/default/keyboard" 2>/dev/null)"
+    echo "  hostname: $(cat "$CH/etc/hostname" 2>/dev/null)"
+
+    hdr "VaeVictis components"
+    ls -l "$CH"/usr/local/bin "$CH"/usr/local/libexec 2>/dev/null | sed 's/^/  /' || true
+    ls "$CH"/usr/share/applications/vv-*.desktop 2>/dev/null | sed 's/^/  /' || true
+    echo "  /etc/skel: $(ls -A "$CH/etc/skel" 2>/dev/null | tr '\n' ' ')"
+    [ -f "$CH/usr/share/polkit-1/actions/org.vaevictis.vpn.policy" ] \
+        && echo "  yes   polkit policy for vv-vpn" || echo "  NO    polkit policy for vv-vpn (asks for the password every time)"
+    [ -d "$CH/var/lib/vv-vpn" ] && echo "  yes   /var/lib/vv-vpn" || echo "  NO    /var/lib/vv-vpn"
+    if [ -f "$CH/etc/nftables.conf" ]; then
+        echo "  nftables.conf: $(grep -cve '^[[:space:]]*\(#\|$\)' "$CH/etc/nftables.conf") active lines; service: $(systemctl --root="$CH" is-enabled nftables.service 2>/dev/null || echo unknown)"
+    else
+        echo "  NO /etc/nftables.conf"
+    fi
+
+    hdr "Build / test tools on THIS machine"
+    for p in mksquashfs xorriso grub-mkrescue mformat qemu-system-x86_64; do
+        if command -v "$p" >/dev/null 2>&1; then printf '  yes   %s\n' "$p"; else printf '  NO    %s\n' "$p"; fi
+    done
+    [ -d /usr/lib/grub/i386-pc ] && echo "  yes   grub BIOS modules" || echo "  NO    grub BIOS modules (grub-pc-bin)"
+    [ -d /usr/lib/grub/x86_64-efi ] && echo "  yes   grub UEFI modules" || echo "  NO    grub UEFI modules (grub-efi-amd64-bin)"
+    local ovmf=""
+    for p in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
+             /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/edk2/x64/OVMF_CODE.4m.fd; do
+        if [ -f "$p" ]; then ovmf="$p"; break; fi
+    done
+    if [ -n "$ovmf" ]; then echo "  yes   UEFI firmware for QEMU: $ovmf"; else echo "  NO    OVMF (package: ovmf)"; fi
+    [ -e /dev/kvm ] && echo "  yes   /dev/kvm (fast VM)" || echo "  NO    /dev/kvm (QEMU would be slow)"
+    echo
+}
+
+cmd_seal() {
+    sanity
+    [ -z "$(mounts)" ] || die "mounts still present: run 'vv-chroot umount' first"
+    local h
+    say() { echo "  - $*"; }
+    echo "Sealing $CH"
+    : > "${CH:?}/etc/machine-id";                                  say "machine-id emptied (new one at every boot)"
+    mkdir -p "$CH/var/lib/dbus"; ln -sfn /etc/machine-id "$CH/var/lib/dbus/machine-id"
+    rm -f "$CH"/etc/ssh/ssh_host_*;                                say "SSH host keys removed"
+    rm -f "$CH/var/lib/systemd/random-seed" "$CH/var/lib/systemd/credential.secret"; say "systemd random-seed / credential secret removed"
+    rm -f "$CH"/root/.bash_history "$CH"/root/.python_history "$CH"/root/.viminfo "$CH"/root/.lesshst
+    for h in "$CH"/home/*; do
+        [ -d "$h" ] && rm -f "$h"/.bash_history "$h"/.python_history "$h"/.viminfo "$h"/.lesshst
+    done;                                                          say "shell/editor history removed (root and /home/*)"
+    find "$CH/tmp" "$CH/var/tmp" -mindepth 1 -delete 2>/dev/null || true; say "/tmp and /var/tmp emptied"
+    find "$CH/var/lib/apt/lists" -type f ! -name lock -delete 2>/dev/null || true
+    rm -f "$CH"/var/cache/apt/*.bin "$CH"/var/cache/apt/archives/*.deb;  say "apt lists and cache emptied (run 'apt update' after install)"
+    find "$CH/var/log" -type f \( -name '*.gz' -o -name '*.[0-9]' -o -name '*.old' \) -delete 2>/dev/null || true
+    find "$CH/var/log" -type f -exec truncate -s0 {} + 2>/dev/null || true
+    rm -rf "$CH"/var/log/journal/* ;                               say "logs emptied (login records included)"
+    rm -f "$CH"/var/lib/NetworkManager/secret_key "$CH"/var/lib/NetworkManager/*.lease \
+          "$CH"/var/lib/NetworkManager/seen-bssids "$CH"/var/lib/NetworkManager/timestamps \
+          "$CH"/var/lib/dhcp/*.leases "$CH"/var/lib/fail2ban/fail2ban.sqlite3; say "NetworkManager/DHCP/fail2ban state removed"
+    rm -f "$CH"/etc/dpkg/*-old "$CH"/var/lib/dpkg/*-old "$CH"/var/cache/debconf/*-old
+    echo "Done. Not touched on purpose: /etc/resolv.conf, NetworkManager profiles, user accounts. Check them with: vv-chroot audit"
+}
+
+cmd_lang() {
+    sanity
+    # Words that are Italian and nothing else (plus accented letters), so English code does not match.
+    local pat='[àèéìòù]|\b(errore|attenzione|avviso|conferma|confermi|premi|scegli|seleziona|utente|annulla|salva|salvataggio|apri|chiudi|esci|nessun|nessuna|impostazioni|sistema|aggiorna|aggiornamento|avvia|avvio|spegni|connesso|disconnesso|connessione|rete|chiave|cartella|trovato|trovata|riprova|attendere|attendi|operazione|completato|completata|riuscito|fallito|fallita|disattivato|attivato|sicurezza|installa|installazione|disco|partizione|riavvia|benvenuto|aiuto|guida|scarica|prima|dopo|oppure|senza|sono|della|dello|degli|delle|nella|nello|sulla|quando|ancora|perch[eé]|per[oò]|cio[eè])\b'
+    local dirs=() d f
+    for d in usr/local/bin usr/local/libexec usr/local/sbin etc/skel; do
+        [ -d "$CH/$d" ] && dirs+=("$CH/$d")
+    done
+    # Launchers: only OUR files. System launchers belong to their packages and are translated on purpose.
+    for d in usr/share/applications etc/xdg/autostart; do
+        [ -d "$CH/$d" ] || continue
+        while IFS= read -r f; do dirs+=("$f"); done < <(find "$CH/$d" -maxdepth 1 -type f \( -name 'vv-*' -o -name 'v-snap*' \
+            -o -name 'aurora*' -o -name 'linpaint*' -o -name 'hids*' -o -name 'vaevictis*' -o -name 'sysctl-helper*' \))
+    done
+    [ -d "$HERE" ] && dirs+=("$HERE")
+    echo "Scanning: our scripts and launchers in the chroot, and the project folder $HERE"
+    # Skipped on purpose: translated entries of any .desktop file (Name[it]=..., Comment[fr]=...), saved web pages
+    # (*_files folders), ISOs, backups and this script.
+    local out
+    out="$(grep -rInEi --exclude-dir='*_files' --exclude-dir=iso-out --exclude-dir=vv-backups --exclude-dir=__pycache__ \
+              --exclude='*.iso' --exclude='*.md' --exclude='*.html' --exclude=vv-chroot --exclude=vv-branding "$pat" "${dirs[@]}" 2>/dev/null \
+          | grep -vE '^[^:]+:[0-9]+:[A-Za-z0-9_-]+\[[^]]+\][[:space:]]*=' | sed "s#$CH/##" || true)"
+    if [ -z "$out" ]; then echo "No Italian found."; return 0; fi
+    echo "Files with Italian (count) and the first 3 lines of each:"
+    echo "$out" | cut -d: -f1 | sort | uniq -c | sort -rn | while read -r n f; do
+        echo; echo "  $f  ($n)"
+        echo "$out" | grep -F "$f:" | head -3 | cut -c1-170 | sed 's/^[^:]*:/    line /'
+    done
+}
+
+cmd_pkgcheck() {
+    sanity
+    set +e                                   # a report: one missing item must not stop the rest
+    local want_size=0; [ "${1:-}" = "--size" ] && want_size=1
+    local -a CORE=(
+        "## Fonts"
+        "fonts-noto-core|Unicode coverage for web pages and documents"
+        "fonts-noto-color-emoji|emoji"
+        "fonts-liberation2|metric-compatible Arial, Times and Courier"
+        "fonts-crosextra-carlito|metric-compatible Calibri (Word and Excel documents)"
+        "fonts-crosextra-caladea|metric-compatible Cambria (Word documents)"
+        "fonts-dejavu-core|default fallback font"
+        "## Wi-Fi, Bluetooth and browsing"
+        "network-manager|network connections"
+        "wpasupplicant|WPA2/WPA3 Wi-Fi (NetworkManager needs it)"
+        "wireless-regdb|legal Wi-Fi channels for your country"
+        "iw|Wi-Fi diagnostics"
+        "rfkill|switch radios on and off"
+        "bluez|Bluetooth stack"
+        "libspa-0.2-bluetooth|Bluetooth audio (headphones, speakers)"
+        "usb-modeswitch|USB Wi-Fi and modem dongles"
+        "firefox-esr|web browser"
+        "libgl1-mesa-dri|OpenGL for Firefox and GNOME"
+        "mesa-vulkan-drivers|Vulkan (games and newer apps)"
+        "traceroute|network diagnostics"
+        "whois|domain lookups"
+        "ethtool|network card diagnostics"
+        "## Office (about 100 MB more on the ISO: measure with sim)"
+        "libreoffice-writer|documents: .docx .odt"
+        "libreoffice-calc|spreadsheets: .xlsx .ods"
+        "libreoffice-impress|presentations: .pptx .odp"
+        "libreoffice-gtk3|native look on GNOME and Wayland"
+        "libreoffice-style-colibre|icons"
+        "hunspell-en-us|spell checking"
+        "## Audio and video"
+        "pipewire-audio|sound: PipeWire, WirePlumber, PulseAudio compatibility"
+        "alsa-ucm-conf|sound routing on modern laptops"
+        "rtkit|realtime priority for PipeWire (smooth audio; silences RTKit errors in the log)"
+        "gstreamer1.0-plugins-good|common media formats"
+        "gstreamer1.0-plugins-bad|more formats"
+        "gstreamer1.0-plugins-ugly|MP3 and other restricted formats"
+        "gstreamer1.0-libav|FFmpeg codecs for GStreamer"
+        "ffmpeg|media backend of Aurora (Qt Multimedia) and Firefox"
+        "## Firmware and CPU microcode"
+        "intel-microcode|CPU security fixes (Intel)"
+        "amd64-microcode|CPU security fixes (AMD)"
+        "firmware-linux|AMD graphics and miscellaneous firmware"
+        "firmware-sof-signed|sound on recent Intel laptops (without it: no audio)"
+        "firmware-nvidia-graphics|NVIDIA cards (the open nouveau driver CRASHES the kernel on RTX 20/30/40 without it)"
+        "firmware-intel-graphics|Intel integrated graphics (i915: power saving and video need it)"
+        "firmware-iwlwifi|Intel Wi-Fi and Bluetooth"
+        "firmware-realtek|Realtek Ethernet and Wi-Fi"
+        "firmware-atheros|Atheros Wi-Fi"
+        "firmware-brcm80211|Broadcom Wi-Fi"
+        "## Disks and files"
+        "cryptsetup|LUKS disk encryption"
+        "cryptsetup-initramfs|unlocks the encrypted disk at boot (without it an encrypted install cannot start)"
+        "systemd-cryptsetup|opens the other encrypted disks and the swap after the root (without it /home and swap never open and the boot stops)"
+        "console-setup|keyboard layout at the passphrase prompt (without it the prompt uses the US layout)"
+        "exfatprogs|exFAT sticks and SD cards"
+        "ntfs-3g|NTFS tools"
+        "dosfstools|FAT and EFI partitions"
+        "btrfs-progs|Btrfs (v-snap)"
+        "xfsprogs|XFS (v-snap)"
+        "smartmontools|disk health"
+        "gvfs-backends|phones (MTP) and network shares"
+        "## Desktop integration"
+        "xdg-desktop-portal-gnome|screenshots and file dialogs (Linpaint)"
+        "qt6-wayland|Qt6 apps (Aurora, PDF Tool) as native Wayland windows: sharp, no XWayland fallback"
+        "gnome-shell-extensions|official GNOME extensions; contains drive-menu: the top-bar eject button for USB sticks and disks"
+        "libgdk-pixbuf2.0-bin|image thumbnails in Files (without it Files shows no previews of pictures)"
+        "gnome-shell-extension-dashtodock|dock that also shows plugged-in USB sticks and disks"
+        "gnome-shell-extension-prefs|the Extensions app (turn extensions on or off)"
+        "bubblewrap|sandbox GNOME uses to generate thumbnails (without it Files shows no previews)"
+        "gnome-desktop3-data|thumbnailer data for Files (installed by hand during the tests)"
+        "ffmpegthumbnailer|video thumbnails in Files"
+        "webp-pixbuf-loader|WebP pictures and their thumbnails"
+        "xdg-utils|xdg-open"
+        "xdg-user-dirs-gtk|Documents, Pictures... folders"
+        "libnotify-bin|notify-send (Aurora)"
+        "file-roller|archive manager"
+        "zip|zip archives"
+        "unzip|unzip archives"
+        "wl-clipboard|clipboard from the terminal"
+        "curl|download tool"
+        "bash-completion|tab completion"
+        "## Your apps"
+        "python3-tk|Linpaint"
+        "python3-pil|Linpaint"
+        "python3-pil.imagetk|Linpaint"
+        "python3-pyqt6|Aurora and PDF Tool"
+        "python3-pyqt6.qtmultimedia|Aurora"
+        "python3-mutagen|Aurora"
+        "python3-gi|VPN, HIDS"
+        "## Installer (so the installation works without a network)"
+        "grub2-common|grub-install and update-grub: the programs that install the boot loader"
+        "grub-common|boot loader tools"
+        "grub-pc-bin|GRUB for BIOS PCs"
+        "grub-efi-amd64-bin|GRUB for UEFI PCs"
+        "os-prober|finds other operating systems for the boot menu"
+        "efibootmgr|UEFI boot entries"
+        "parted|disk partitioning"
+        "keyboard-configuration|keyboard layout of the installed system"
+        "## VaeVictis extras (approved)"
+        "keepassxc|offline password manager"
+        "mat2|strip metadata from files"
+        "lynis|security audit: publish your score"
+        "debsums|verify installed files against package checksums"
+        "spice-vdagent|clipboard and resizing inside QEMU and virt-manager"
+        "qemu-guest-agent|QEMU guest agent"
+    )
+    local -a OPT=(
+        "## Security"
+        "systemd-timesyncd|clock synchronisation (without it the clock drifts and HTTPS certificates start to fail)"
+        "apparmor-utils|manage AppArmor profiles"
+        "apparmor-profiles|extra AppArmor profiles"
+        "secure-delete|srm: overwrite and delete"
+        "## More hardware support"
+        "firmware-intel-misc|Intel miscellaneous firmware"
+        "firmware-mediatek|MediaTek Wi-Fi and Bluetooth"
+        "bluez-obexd|receive files over Bluetooth"
+        "## More fonts"
+        "fonts-noto-cjk|Chinese, Japanese, Korean (large)"
+        "fonts-firacode|programming font"
+    )
+    local missing_core=() missing_opt=()
+    scan() {   # scan ARRAY MISSING_ARRAY
+        local -n arr="$1" miss="$2"
+        local l p w
+        for l in "${arr[@]}"; do
+            case "$l" in
+                "## "*) printf '\n  %s\n' "${l#\#\# }" ;;
+                *)  p="${l%%|*}"; w="${l#*|}"
+                    if [ "$(dpkg-query --admindir="$CH/var/lib/dpkg" -W -f='${db:Status-Abbrev}' "$p" 2>/dev/null | cut -c1-2)" = "ii" ]; then
+                        printf '    yes   %-28s %s\n' "$p" "$w"
+                    else
+                        printf '    NO    %-28s %s\n' "$p" "$w"; miss+=("$p")
+                    fi ;;
+            esac
+        done
+    }
+    echo "== CORE: needed for a fully working desktop"; scan CORE missing_core
+    echo; echo "== OPTIONAL: extras"; scan OPT missing_opt
+
+    echo; echo "== Do your apps start? (imports tested inside the chroot)"
+    cat > "$CH/tmp/vv_import_check.py" <<'PYEND'
+import importlib
+def try_import(*names):
+    for n in names:
+        try:
+            importlib.import_module(n); return True
+        except Exception:
+            pass
+    return False
+checks = [
+    ("Aurora",   try_import("PyQt6.QtWidgets") and try_import("PyQt6.QtMultimedia") and try_import("mutagen")),
+    ("PDF Tool", try_import("PyQt6.QtWidgets") and try_import("pymupdf", "fitz")),
+    ("Linpaint", try_import("tkinter") and try_import("PIL.ImageTk") and try_import("gi")),
+    ("VPN, HIDS", try_import("gi")),
+]
+for name, ok in checks:
+    print("    %-4s  %s" % ("yes" if ok else "NO", name))
+PYEND
+    if [ -n "${VV_SKIP_CHROOT:-}" ]; then echo "    [skipped in test]"; else run_inside python3 /tmp/vv_import_check.py; fi
+    rm -f "$CH/tmp/vv_import_check.py"
+
+    echo
+    if [ "${#missing_core[@]}" -gt 0 ]; then
+        echo "Missing CORE packages (${#missing_core[@]}). Simulate first (also validates the names), then install:"
+        echo "  ./vv-chroot run apt-get update      (needed after 'seal': it empties the package lists)"
+        echo "  ./vv-chroot pkgcheck --size"
+        echo "  ./vv-chroot run apt-get install --no-install-recommends ${missing_core[*]}"
+        if [ "$want_size" = 1 ] && [ -z "${VV_SKIP_CHROOT:-}" ]; then
+            echo; echo "Simulation (nothing is installed):"
+            cat > "$CH/tmp/vv_size.py" <<'PYEND'
+import subprocess, sys
+r = subprocess.run(["apt-get", "-s", "install", "--no-install-recommends", *sys.argv[1:]], capture_output=True, text=True)
+for ln in (r.stdout + r.stderr).splitlines():
+    if ln.startswith("E:") or "Unable to locate" in ln:
+        print("    " + ln)
+if "Unable to locate" in (r.stdout + r.stderr):
+    print("    hint: the package lists are empty ('seal' removes them). Run first:  ./vv-chroot run apt-get update")
+pk = [ln.split()[1] for ln in r.stdout.splitlines() if ln.startswith("Inst ")]
+dl = inst = 0
+for p in pk:
+    block = subprocess.run(["apt-cache", "show", p], capture_output=True, text=True).stdout.split("\n\n")[0]
+    for ln in block.splitlines():
+        if ln.startswith("Size:"):
+            dl += int(ln.split()[1])
+        elif ln.startswith("Installed-Size:"):
+            inst += int(ln.split()[1])
+print("    %d packages (requested + dependencies): download about %.0f MB, installed about %.0f MB"
+      % (len(pk), dl / 1e6, inst / 1024))
+print("    the ISO grows less than the installed size: it is compressed")
+PYEND
+            run_inside python3 /tmp/vv_size.py "${missing_core[@]}"
+            rm -f "$CH/tmp/vv_size.py"
+        fi
+    else
+        echo "All CORE packages are installed."
+    fi
+    if [ "${#missing_opt[@]}" -gt 0 ]; then
+        echo; echo "Optional extras you may want:  ${missing_opt[*]}"
+    fi
+}
+
+cmd_login() {
+    sanity
+    local p="$CH/etc/dconf/profile/gdm" f d="$CH/etc/dconf/db/gdm.d"
+    echo "== login screen logo"
+    if [ -f "$p" ]; then echo "  /etc/dconf/profile/gdm:"; sed 's/^/      /' "$p"
+    else echo "  no /etc/dconf/profile/gdm (the vendor profile under /usr/share/dconf/profile applies)"; fi
+    echo "  files in gdm.d (the LAST one wins):"
+    for f in $(ls "$d" 2>/dev/null | sort); do printf '      %-22s %s\n' "$f" "$(grep -h '^logo=' "$d/$f" 2>/dev/null | head -1)"; done
+    [ -f "$CH/etc/dconf/db/gdm" ] || echo "  !! the compiled database /etc/dconf/db/gdm is MISSING: run ./vv-branding"
+    if [ -f "$CH/etc/dconf/db/gdm" ] && [ -n "$(find "$d" -type f -newer "$CH/etc/dconf/db/gdm" 2>/dev/null)" ]; then
+        echo "  !! the compiled database is OLDER than its source files: run ./vv-branding (it runs dconf update)"; fi
+    echo "  Debian's own profile /usr/share/dconf/profile/gdm:"
+    if [ -f "$CH/usr/share/dconf/profile/gdm" ]; then sed 's/^/      /' "$CH/usr/share/dconf/profile/gdm"; else echo "      (none)"; fi
+    ls -l "$CH/usr/share/dconf/profile/" 2>/dev/null | awk 'NR>1 && $9 != "" {print "      " $9 " " $10 " " $11}' || true
+    echo "  where Debian sets the logo:"
+    local lg
+    for lg in "$CH/etc/gdm3/greeter.dconf-defaults" "$CH/usr/share/gdm/greeter.dconf-defaults"; do
+        if [ -f "$lg" ]; then printf '      %s:\n' "${lg#"$CH"}"; grep -n 'logo' "$lg" | sed 's/^/          /' || true
+        else echo "      ${lg#"$CH"}: does not exist"; fi
+    done
+    echo "  /usr/share/gdm/dconf:"; ls -l "$CH/usr/share/gdm/dconf" 2>/dev/null | awk 'NR>1 && $9 != "" {print "      " $9 " " $10 " " $11}' || true
+    echo "  compiled databases:"
+    ls -l "$CH/etc/dconf/db" "$CH/var/lib/gdm3" 2>/dev/null | awk '$9 ~ /gdm|greeter/ {print "      " $9 "  " $5 " byte  " $6 " " $7 " " $8}' || true
+    if [ -s "$CH/var/lib/gdm3/.config/dconf/user" ]; then
+        echo "  !! the greeter user (Debian-gdm) has its own settings file: it outranks every other layer"; fi
+    if [ -z "${VV_SKIP_CHROOT:-}" ]; then
+        echo "  EFFECTIVE logo value, as dconf resolves it:"
+        run_inside sh -c 'for p in gdm Debian-gdm; do v=$(DCONF_PROFILE=$p dconf read /org/gnome/login-screen/logo 2>&1); printf "      profile %-10s %s\n" "$p" "${v:-<not set>}"; done' 2>&1 | grep -v '^clean:' || true
+    fi
+    echo "== accounts (uid 1000 and up)"
+    awk -F: '$3>=1000 && $3<60000 {print "  " $1 " (uid " $3 ")"}' "$CH/etc/passwd"
+    echo "  root: $(awk -F: '$1=="root"{print ($2 ~ /^[!*]/) ? "locked" : "HAS A PASSWORD HASH"}' "$CH/etc/shadow" 2>/dev/null)"
+    echo "== automatic login"
+    grep -Hn '^AutomaticLogin' "$CH"/etc/gdm3/daemon.conf "$CH"/etc/gdm3/custom.conf 2>/dev/null | sed "s#$CH##; s/^/  active: /" || true
+    { ls "$CH"/etc/live/config.conf.d/ 2>/dev/null || true; } | sed 's/^/  live-config settings: /'
+    [ -L "$CH/etc/systemd/system/multi-user.target.wants/vv-live-session.service" ] \
+        && echo "  vv-live-session.service: installed and enabled" || echo "  vv-live-session.service: NOT enabled (run ./vv-liveuser --apply)"
+    for f in "$CH"/etc/sudoers.d/*; do if [ -f "$f" ]; then echo "  sudoers.d: $(basename "$f")"; fi; done
+    return 0
+}
+
+cmd_has() {
+    sanity
+    [ $# -gt 0 ] || die "usage: vv-chroot has PACKAGE..."
+    local p v
+    for p in "$@"; do
+        v="$(dpkg-query --admindir="$CH/var/lib/dpkg" -W -f='${db:Status-Abbrev}|${Version}' "$p" 2>/dev/null || true)"
+        case "$v" in
+            ii*) printf '  yes   %-26s %s\n' "$p" "${v#*|}" ;;
+            *)   printf '  NO    %s\n' "$p" ;;
+        esac
+    done
+}
+
+cmd_sim() {
+    sanity
+    [ $# -gt 0 ] || die "usage: vv-chroot sim PACKAGE..."
+    cat > "$CH/tmp/vv_size.py" <<'PYEND'
+import subprocess, sys
+r = subprocess.run(["apt-get", "-s", "install", "--no-install-recommends", *sys.argv[1:]], capture_output=True, text=True)
+for ln in (r.stdout + r.stderr).splitlines():
+    if ln.startswith("E:") or "Unable to locate" in ln:
+        print("    " + ln)
+if "Unable to locate" in (r.stdout + r.stderr):
+    print("    hint: the package lists are empty ('seal' removes them). Run first:  ./vv-chroot run apt-get update")
+pk = [ln.split()[1] for ln in r.stdout.splitlines() if ln.startswith("Inst ")]
+dl = inst = 0
+for p in pk:
+    block = subprocess.run(["apt-cache", "show", p], capture_output=True, text=True).stdout.split("\n\n")[0]
+    for ln in block.splitlines():
+        if ln.startswith("Size:"):
+            dl += int(ln.split()[1])
+        elif ln.startswith("Installed-Size:"):
+            inst += int(ln.split()[1])
+print("    %d packages (requested + dependencies): download about %.0f MB, installed about %.0f MB"
+      % (len(pk), dl / 1e6, inst / 1024))
+print("    the ISO grows less than the installed size: it is compressed")
+PYEND
+    run_inside python3 /tmp/vv_size.py "$@"
+    rm -f "$CH/tmp/vv_size.py"
+}
+
+case "${1:-}" in
+    status) sanity; echo "chroot: $CH"; m="$(mounts)"; [ -n "$m" ] && echo "$m" || echo "no mounts" ;;
+    mount)  do_mount ;;
+    umount) do_umount ;;
+    run)    shift; [ $# -gt 0 ] || die "usage: vv-chroot run COMMAND [ARGS...]"; run_inside "$@" ;;
+    enter)  run_inside /bin/bash -l ;;
+    audit)  cmd_audit ;;
+    seal)   cmd_seal ;;
+    lang)   cmd_lang ;;
+    login)  cmd_login ;;
+    has)    shift; cmd_has "$@" ;;
+    sim)    shift; cmd_sim "$@" ;;
+    pkgcheck) cmd_pkgcheck "${2:-}" ;;
+    *)      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

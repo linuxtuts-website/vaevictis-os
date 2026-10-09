@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=VaeVictis VPN
+Comment=WireGuard manager
+Exec=/usr/local/bin/vv-vpn
+Icon=network-vpn
+Terminal=false
+Categories=Network;Security;
+Keywords=vpn;wireguard;tunnel;
+StartupWMClass=vv-vpn

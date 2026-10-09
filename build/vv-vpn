@@ -1,0 +1,426 @@
+#!/usr/bin/env python3
+"""
+VaeVictis VPN - WireGuard front-end (GTK3)
+Privileged work is done by /usr/local/libexec/vv-vpn-helper through pkexec.
+The only network access is the optional, manual "CHECK" of the public IP.
+"""
+import os
+import re
+import subprocess
+import threading
+
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, GLib
+
+CONF_DIR = "/etc/wireguard"
+INDEX = "/var/lib/vv-vpn/nodes"                  # names only, readable by everyone
+HELPER = "/usr/local/libexec/vv-vpn-helper"
+NAME_RE = re.compile(r"^[A-Za-z0-9_=+.-]{1,15}$")  # valid wg-quick interface names
+POLL_SECONDS = 2
+KS_FLAG = "/run/vv-vpn/killswitch"               # exists while the kill switch is on (made by the helper)
+KS_PREF = os.path.expanduser("~/.config/vaevictis/vv-vpn-killswitch")   # "1" = ask for it at every connect
+
+CSS = b"""
+window { background-color: #0b0b0e; color: #e2e2e5; font-family: system-ui, sans-serif; }
+label.title { font-size: 11px; font-weight: bold; letter-spacing: 3px; color: #35f0a1; }
+label.status { font-size: 20px; font-weight: bold; }
+label.on { color: #35f0a1; }
+label.off { color: #ff5d5d; }
+label.busy { color: #ffb347; }
+label.dim { color: #707075; font-size: 12px; }
+label.err { color: #ff8080; font-size: 12px; }
+label.ok { color: #35f0a1; font-size: 12px; }
+button {
+    background: #15151a; color: #e2e2e5; border: 1px solid #2a2a32; border-radius: 8px;
+    padding: 8px 14px; font-weight: bold; box-shadow: none; background-image: none;
+}
+button:hover { background: #1c1c22; border-color: #3a3a42; }
+button:disabled { color: #505055; background: #101014; }
+button.primary { background: #35f0a1; color: #0b0b0e; border: none; padding: 12px 14px; }
+button.primary:hover { background: #6bf5bb; }
+button.primary.danger { background: #ff5d5d; color: #0b0b0e; }
+button.primary.danger:hover { background: #ff8080; }
+button.primary:disabled { background: #1c1c22; color: #505055; }
+combobox button.combo { padding: 6px 10px; }
+separator { background: #1c1c22; min-height: 1px; }
+"""
+
+
+def valid_name(name):
+    return bool(NAME_RE.match(name or ""))
+
+
+def scan_nodes():
+    """Config names. /etc/wireguard is 0700 root by default, so fall back to the public index."""
+    names = []
+    try:
+        names = [f[:-5] for f in os.listdir(CONF_DIR) if f.endswith(".conf")]
+    except OSError:
+        try:
+            with open(INDEX) as fh:
+                names = [ln.strip() for ln in fh if ln.strip()]
+        except OSError:
+            pass
+    return sorted(n for n in set(names) if valid_name(n))
+
+
+def active_interfaces():
+    """Names of the up WireGuard interfaces (cheap, needs no privileges)."""
+    try:
+        out = subprocess.run(["ip", "-o", "link", "show", "type", "wireguard"],
+                             capture_output=True, text=True, timeout=2).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return [m.group(1) for m in re.finditer(r"^\d+:\s+([^:@\s]+)", out, re.M)]
+
+
+def ks_active():
+    return os.path.exists(KS_FLAG)
+
+
+def ks_pref():
+    try:
+        with open(KS_PREF) as fh:
+            return fh.read().strip() == "1"
+    except OSError:
+        return False
+
+
+def save_ks_pref(on):
+    try:
+        os.makedirs(os.path.dirname(KS_PREF), exist_ok=True)
+        with open(KS_PREF, "w") as fh:
+            fh.write("1\n" if on else "0\n")
+    except OSError:
+        pass
+
+
+def tunnel_address(iface):
+    try:
+        out = subprocess.run(["ip", "-o", "addr", "show", "dev", iface],
+                             capture_output=True, text=True, timeout=2).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    m = re.search(r"\binet6?\s+(\S+)", out)
+    return m.group(1) if m else ""
+
+
+class VPNManager(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="VaeVictis VPN")
+        self.set_border_width(20)
+        self.set_default_size(430, -1)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_resizable(False)
+        self.set_icon_name("network-vpn")
+
+        self.busy = False
+        self._sync = False
+        self.active = []
+        self.nodes = []
+
+        prov = Gtk.CssProvider()
+        prov.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_screen(
+            self.get_screen(), prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.add(root)
+
+        title = self._label("VAEVICTIS VPN", "title")
+        root.pack_start(title, False, False, 0)
+
+        # status row
+        srow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.spinner = Gtk.Spinner()
+        self.lbl_status = self._label("...", "status")
+        srow.pack_start(self.spinner, False, False, 0)
+        srow.pack_start(self.lbl_status, False, False, 0)
+        root.pack_start(srow, False, False, 0)
+        self.lbl_detail = self._label("", "dim")
+        self.lbl_detail.set_line_wrap(True)
+        root.pack_start(self.lbl_detail, False, False, 0)
+
+        root.pack_start(Gtk.Separator(), False, False, 2)
+
+        # node selector
+        nrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        nrow.pack_start(self._label("NODE", "dim"), False, False, 0)
+        self.combo = Gtk.ComboBoxText()
+        nrow.pack_start(self.combo, True, True, 0)
+        self.btn_rescan = Gtk.Button.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
+        self.btn_rescan.set_tooltip_text("Rescan /etc/wireguard (asks for authorization)")
+        self.btn_rescan.connect("clicked", self.on_rescan)
+        nrow.pack_start(self.btn_rescan, False, False, 0)
+        self.btn_import = Gtk.Button(label="IMPORT")
+        self.btn_import.set_tooltip_text("Import a WireGuard .conf file")
+        self.btn_import.connect("clicked", self.on_import)
+        nrow.pack_start(self.btn_import, False, False, 0)
+        root.pack_start(nrow, False, False, 0)
+
+        # main action
+        self.btn_main = Gtk.Button(label="CONNECT")
+        self.btn_main.get_style_context().add_class("primary")
+        self.btn_main.connect("clicked", self.on_main)
+        root.pack_start(self.btn_main, False, False, 0)
+
+        # kill switch: with it on, nothing leaves this PC except through the tunnel
+        self.chk_ks = Gtk.CheckButton(label="Kill switch: block all traffic if the tunnel drops")
+        self.chk_ks.set_tooltip_text(
+            "Blocks every packet that does not go through the VPN (and the DHCP the network needs).\n"
+            "Needs a full-tunnel config (AllowedIPs = 0.0.0.0/0). Lasts until you disconnect, release it or reboot.")
+        self._sync = True
+        self.chk_ks.set_active(ks_pref())
+        self._sync = False
+        self.chk_ks.connect("toggled", self.on_ks_toggled)
+        root.pack_start(self.chk_ks, False, False, 0)
+
+        self.btn_release = Gtk.Button(label="RELEASE KILL SWITCH")
+        self.btn_release.set_tooltip_text("Go back to your normal connection (traffic is no longer protected)")
+        self.btn_release.connect("clicked", self.on_release)
+        self.btn_release.set_no_show_all(True)
+        root.pack_start(self.btn_release, False, False, 0)
+
+        # optional public-IP check (off by default: it contacts a third party)
+        irow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.lbl_ip = self._label("PUBLIC IP: not checked", "dim")
+        irow.pack_start(self.lbl_ip, True, True, 0)
+        self.btn_ip = Gtk.Button(label="CHECK")
+        self.btn_ip.set_tooltip_text("Asks ifconfig.me for your public IP (contacts a third-party server)")
+        self.btn_ip.connect("clicked", self.on_check_ip)
+        irow.pack_start(self.btn_ip, False, False, 0)
+        root.pack_start(irow, False, False, 0)
+
+        self.lbl_msg = self._label("", "err")
+        self.lbl_msg.set_line_wrap(True)
+        self.lbl_msg.set_max_width_chars(48)
+        self.lbl_msg.set_no_show_all(True)
+        root.pack_start(self.lbl_msg, False, False, 0)
+
+        self.load_nodes()
+        self.refresh()
+        GLib.timeout_add_seconds(POLL_SECONDS, self.refresh)
+
+    # ---- small helpers ---------------------------------------------------
+    @staticmethod
+    def _label(text, cls):
+        lab = Gtk.Label(label=text)
+        lab.set_xalign(0)
+        lab.get_style_context().add_class(cls)
+        return lab
+
+    @staticmethod
+    def _set_class(widget, cls):
+        ctx = widget.get_style_context()
+        for c in ("on", "off", "busy"):
+            ctx.remove_class(c)
+        ctx.add_class(cls)
+
+    def set_msg(self, text, kind="err"):
+        ctx = self.lbl_msg.get_style_context()
+        for c in ("err", "ok"):
+            ctx.remove_class(c)
+        ctx.add_class(kind)
+        self.lbl_msg.set_text(text)
+        self.lbl_msg.set_visible(bool(text))
+
+    def set_busy(self, busy, text=""):
+        self.busy = busy
+        if busy:
+            self.spinner.start()
+            self.spinner.show()
+            self.lbl_status.set_text(text)
+            self._set_class(self.lbl_status, "busy")
+        else:
+            self.spinner.stop()
+            self.spinner.hide()
+        for w in (self.btn_main, self.btn_import, self.btn_rescan, self.combo, self.chk_ks, self.btn_release):
+            w.set_sensitive(not busy)
+
+    # ---- nodes -----------------------------------------------------------
+    def load_nodes(self, select=None):
+        keep = select or self.combo.get_active_text()
+        self.nodes = scan_nodes()
+        self.combo.remove_all()
+        for n in self.nodes:
+            self.combo.append_text(n)
+        if self.nodes:
+            self.combo.set_active(self.nodes.index(keep) if keep in self.nodes else 0)
+
+    # ---- state -----------------------------------------------------------
+    def refresh(self):
+        self.active = active_interfaces()
+        if self.busy:
+            return True
+        ks = ks_active()
+        if self.active:
+            iface = self.active[0]
+            addr = tunnel_address(iface)
+            self.lbl_status.set_text("\u25cf TUNNEL UP")
+            self._set_class(self.lbl_status, "on")
+            self.lbl_detail.set_text(f"Interface {iface}" + (f"  \u00b7  {addr}" if addr else "")
+                                     + ("  \u00b7  kill switch ON" if ks else ""))
+            self.btn_main.set_label("DISCONNECT")
+            self.btn_main.get_style_context().add_class("danger")
+            self.btn_main.set_sensitive(True)
+            self.combo.set_sensitive(False)
+            if iface in self.nodes:
+                self.combo.set_active(self.nodes.index(iface))
+        elif ks:
+            self.lbl_status.set_text("\u25cf BLOCKED")
+            self._set_class(self.lbl_status, "busy")
+            self.lbl_detail.set_text("Kill switch is on: no traffic leaves this PC. Connect again, "
+                                     "or release it to go back to your normal connection.")
+            self.btn_main.set_label("CONNECT")
+            self.btn_main.get_style_context().remove_class("danger")
+            self.btn_main.set_sensitive(bool(self.nodes))
+            self.combo.set_sensitive(bool(self.nodes))
+        else:
+            self.lbl_status.set_text("\u25cf NO TUNNEL")
+            self._set_class(self.lbl_status, "off")
+            self.lbl_detail.set_text(
+                "Traffic leaves through your normal connection." if self.nodes
+                else "No configs found. Use IMPORT to add a WireGuard .conf file.")
+            self.btn_main.set_label("CONNECT")
+            self.btn_main.get_style_context().remove_class("danger")
+            self.btn_main.set_sensitive(bool(self.nodes))
+            self.combo.set_sensitive(bool(self.nodes))
+        # the checkbox shows the real state when there is one; with no tunnel and no kill switch it keeps the preference
+        if ks or self.active:
+            self._sync = True
+            self.chk_ks.set_active(ks)
+            self._sync = False
+        self.btn_release.set_visible(ks and not self.active)
+        return True
+
+    # ---- privileged calls (never block the UI) ----------------------------
+    def run_helper(self, args, label, stdin=None, after=None):
+        self.set_msg("")
+        self.set_busy(True, label)
+
+        def work():
+            try:
+                r = subprocess.run(["pkexec", HELPER, *args], input=stdin,
+                                   capture_output=True, timeout=180)
+                rc = r.returncode
+                out = r.stdout.decode(errors="replace")
+                err = r.stderr.decode(errors="replace")
+            except FileNotFoundError:
+                rc, out, err = 127, "", "pkexec not found (install the 'pkexec' package)."
+            except subprocess.TimeoutExpired:
+                rc, out, err = 124, "", "Operation timed out."
+            GLib.idle_add(self._helper_done, rc, out, err, after)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _helper_done(self, rc, out, err, after):
+        self.set_busy(False)
+        if rc in (126, 127) and not err.strip().startswith("pkexec not found"):
+            self.set_msg("Authorization cancelled or denied.")
+        elif rc != 0:
+            lines = [ln for ln in err.strip().splitlines() if ln.strip()]
+            self.set_msg("\n".join(lines[-6:]) or f"Operation failed (exit code {rc}).")
+        elif after:
+            after(out)
+        self.load_nodes()
+        self.refresh()
+        return False
+
+    def on_main(self, _btn):
+        if self.busy:
+            return
+        if self.active:
+            iface = self.active[0]
+            if valid_name(iface):
+                self.run_helper(["down", iface], f"Disconnecting {iface}...")
+        else:
+            name = self.combo.get_active_text()
+            if name:
+                extra = ["killswitch"] if self.chk_ks.get_active() else []
+                self.run_helper(["up", name, *extra], f"Connecting to {name}...")
+
+    def on_ks_toggled(self, chk):
+        if self._sync or self.busy:
+            return
+        want = chk.get_active()
+        save_ks_pref(want)
+        if self.active and want:
+            self.run_helper(["ks-on", self.active[0]], "Switching the kill switch on...")
+        elif ks_active() and not want:
+            self.run_helper(["ks-off"], "Switching the kill switch off...")
+
+    def on_release(self, _btn):
+        if not self.busy:
+            self.run_helper(["ks-off"], "Releasing the kill switch...")
+
+    def on_rescan(self, _btn):
+        before = scan_nodes()
+        try:
+            os.listdir(CONF_DIR)
+        except OSError:
+            self.run_helper(["list"], "Scanning...")      # needs root: also refreshes the public index
+            return
+        self.load_nodes()
+        self.set_msg(f"{len(before)} config(s) found.", "ok")
+
+    def on_import(self, _btn):
+        dlg = Gtk.FileChooserDialog(title="Import WireGuard config", parent=self,
+                                    action=Gtk.FileChooserAction.OPEN)
+        dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Import", Gtk.ResponseType.OK)
+        flt = Gtk.FileFilter()
+        flt.set_name("WireGuard config (*.conf)")
+        flt.add_pattern("*.conf")
+        dlg.add_filter(flt)
+        resp = dlg.run()
+        path = dlg.get_filename()
+        dlg.destroy()
+        if resp != Gtk.ResponseType.OK or not path:
+            return
+        name = os.path.basename(path)
+        name = name[:-5] if name.endswith(".conf") else name
+        if not valid_name(name):
+            self.set_msg("Invalid file name. Rename it using only letters, digits and _ = + . - "
+                         "(max 15 characters), e.g. work-vpn.conf")
+            return
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read(65537)          # read as the user, hand the content to the helper
+        except OSError as e:
+            self.set_msg(f"Cannot read file: {e.strerror}")
+            return
+        self.run_helper(["import", name], f"Importing {name}...", stdin=data,
+                        after=lambda _o: (self.load_nodes(select=name),
+                                          self.set_msg(f"Imported {name}.", "ok")))
+
+    def on_check_ip(self, _btn):
+        self.btn_ip.set_sensitive(False)
+        self.lbl_ip.set_text("PUBLIC IP: checking...")
+
+        def work():
+            try:
+                r = subprocess.run(["curl", "-fsS", "--max-time", "6", "https://ifconfig.me/ip"],
+                                   capture_output=True, text=True, timeout=10)
+                ip = r.stdout.strip() if r.returncode == 0 else ""
+            except (OSError, subprocess.TimeoutExpired):
+                ip = ""
+            GLib.idle_add(self._ip_done, ip)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _ip_done(self, ip):
+        self.lbl_ip.set_text(f"PUBLIC IP: {ip}" if ip else "PUBLIC IP: unavailable")
+        self.btn_ip.set_sensitive(True)
+        return False
+
+
+if __name__ == "__main__":
+    GLib.set_prgname("vv-vpn")                  # matches vv-vpn.desktop (icon/grouping on Wayland)
+    GLib.set_application_name("VaeVictis VPN")
+    win = VPNManager()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    win.lbl_msg.hide()
+    win.spinner.hide()
+    win.btn_release.set_visible(ks_active() and not win.active)
+    Gtk.main()

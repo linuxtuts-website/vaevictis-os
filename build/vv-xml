@@ -1,0 +1,637 @@
+#!/usr/bin/env python3
+"""
+VaeVictis XML - small offline XML editor (GTK3, optional GtkSourceView)
+Privacy: zero network access. External entities / DTDs are never fetched.
+"""
+import codecs
+import os
+import re
+import shutil
+import sys
+import tempfile
+import xml.parsers.expat as expat
+
+import gi
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gtk, Gdk, Gio, GLib, Pango
+
+try:
+    gi.require_version("GtkSource", "4")
+    from gi.repository import GtkSource
+    HAVE_SRC = True
+except (ValueError, ImportError):
+    HAVE_SRC = False
+
+MAX_BYTES = 20 * 1024 * 1024        # refuse files that would freeze the editor
+LIVE_CHECK_LIMIT = 1_500_000        # characters; larger docs are validated on demand (F5)
+SCHEME_ID = "vaevictis-dark"
+
+CSS = b"""
+window.vv { background-color: #0b0b0e; color: #e2e2e5; }
+.vv textview { font-family: monospace; font-size: 13px; }
+.vv textview.plain text { background-color: #0b0b0e; color: #e2e2e5; }
+.vv button {
+    background: #15151a; color: #e2e2e5; border: 1px solid #2a2a32; border-radius: 6px;
+    padding: 4px 12px; font-weight: bold; box-shadow: none; background-image: none;
+}
+.vv button:hover { background: #1c1c22; border-color: #35f0a1; }
+.vv button:checked { background: #1c1c22; color: #35f0a1; }
+.vv button:disabled { color: #505055; }
+.vv label.status { font-family: monospace; font-weight: bold; }
+.vv label.ok { color: #35f0a1; }
+.vv label.err { color: #ff5d5d; }
+.vv label.dim { color: #707075; font-size: 12px; }
+.vv .bottom { border-top: 1px solid #1c1c22; }
+.vv searchbar, .vv searchbar > revealer > box, .vv .search-bar {
+    background: #0b0b0e; background-image: none; border: none; border-bottom: 1px solid #1c1c22;
+}
+.vv entry, .vv searchbar entry {
+    background: #15151a; color: #e2e2e5; border: 1px solid #2a2a32; border-radius: 6px;
+    box-shadow: none; min-height: 28px;
+}
+.vv entry:focus { border-color: #35f0a1; }
+.vv scrollbar slider { background: #2a2a32; border-radius: 6px; min-width: 8px; min-height: 8px; }
+.vv scrollbar slider:hover { background: #3a3a42; }
+.vv scrollbar { background: transparent; }
+"""
+
+# --------------------------------------------------------------------------
+# XML helpers (no GTK here)
+# --------------------------------------------------------------------------
+def check_xml(text):
+    """Well-formedness check. Returns None or (line, byte_column, message)."""
+    p = expat.ParserCreate()
+    p.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
+    p.ExternalEntityRefHandler = lambda *a: 1          # never resolve external entities
+    try:
+        p.Parse(text, True)                            # str input: expat ignores the declared encoding
+    except expat.ExpatError as e:
+        return e.lineno, e.offset, expat.ErrorString(e.code)
+    return None
+
+
+TOKEN_RE = re.compile(r'''
+    <!--.*?-->
+  | <!\[CDATA\[.*?\]\]>
+  | <\?.*?\?>
+  | <!DOCTYPE(?:[^\[>"']|"[^"]*"|'[^']*')*(?:\[.*?\]\s*)?>
+  | </[^>]*>
+  | <(?:[^>"']|"[^"]*"|'[^']*')*>
+  | [^<]+
+''', re.S | re.X)
+
+
+def _kind(tok):
+    if tok.startswith("<!--"):
+        return "comment"
+    if tok.startswith("<![CDATA["):
+        return "cdata"
+    if tok.startswith("<?"):
+        return "pi"
+    if tok.startswith("<!"):
+        return "doctype"
+    if tok.startswith("</"):
+        return "end"
+    if tok.startswith("<"):
+        return "empty" if tok.endswith("/>") else "start"
+    return "text"
+
+
+def pretty_format(text, unit="  "):
+    """Re-indent by touching ONLY the whitespace between tags.
+
+    Everything else (attributes, entities, CDATA, comments, DOCTYPE) stays byte-identical.
+    Refuses documents where re-indenting could change the meaning.
+    """
+    toks = [m.group(0) for m in TOKEN_RE.finditer(text)]
+    if "".join(toks) != text:
+        raise ValueError("unsupported markup")
+    kinds = [_kind(t) for t in toks]
+
+    stack = []                                   # [has_text, has_child] per open element
+    for t, k in zip(toks, kinds):
+        if k in ("start", "empty", "end", "comment", "pi") and "xml:space" in t and "preserve" in t:
+            raise ValueError("xml:space=\"preserve\" is used")
+        if (k == "text" and not t.strip()) or (not stack and k != "start"):
+            continue                                  # whitespace, or prolog items outside the root
+        parent = stack[-1] if stack else None
+        if k == "start":
+            if parent:
+                parent[1] = True
+            stack.append([False, False])
+        elif k == "end":
+            if stack:
+                stack.pop()
+        elif parent is not None:
+            if k in ("text", "cdata"):
+                parent[0] = True
+            else:
+                parent[1] = True
+            if parent[0] and parent[1]:
+                raise ValueError("mixed content (text next to elements)")
+
+    out, depth, i = [], 0, 0
+    while i < len(toks):
+        t, k = toks[i], kinds[i]
+        if k == "text" and not t.strip():
+            i += 1
+            continue
+        pad = unit * max(depth, 0)
+        if k == "start":
+            nxt = kinds[i + 1] if i + 1 < len(toks) else ""
+            nxt2 = kinds[i + 2] if i + 2 < len(toks) else ""
+            if nxt in ("text", "cdata") and nxt2 == "end":
+                out.append(pad + t + toks[i + 1] + toks[i + 2])      # <a>text</a> stays on one line
+                i += 3
+                continue
+            out.append(pad + t)
+            depth += 1
+        elif k == "end":
+            depth -= 1
+            out.append(unit * max(depth, 0) + t)
+        else:
+            out.append(pad + (t.strip() if k == "text" else t))
+        i += 1
+    return "\n".join(out) + "\n"
+
+
+def decode_bytes(raw):
+    """-> (text, encoding). Honors BOMs and the encoding= of the XML declaration."""
+    if raw.startswith(codecs.BOM_UTF8):
+        return raw[3:].decode("utf-8"), "utf-8-sig"
+    if raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return raw.decode("utf-16"), "utf-16"
+    m = re.match(rb'\s*<\?xml[^>]*?encoding\s*=\s*["\']([A-Za-z0-9._-]+)["\']', raw[:300])
+    enc = m.group(1).decode("ascii") if m else "utf-8"
+    try:
+        codecs.lookup(enc)
+    except LookupError:
+        enc = "utf-8"
+    return raw.decode(enc), enc
+
+
+# --------------------------------------------------------------------------
+# Editor
+# --------------------------------------------------------------------------
+class XMLEditor(Gtk.Window):
+    def __init__(self, filepath=None):
+        super().__init__()
+        self.set_default_size(960, 680)
+        self.set_icon_name("text-xml")
+        self.get_style_context().add_class("vv")
+        self.filepath = None
+        self.encoding = "utf-8"
+        self.crlf = False
+        self.error_pos = None
+        self.check_timer = 0
+
+        Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
+        prov = Gtk.CssProvider()
+        prov.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        self._build_ui()
+        self._build_accels()
+        self.connect("delete-event", lambda *_: not self.confirm_discard())
+
+        if filepath:
+            if os.path.exists(filepath):
+                self.open_path(filepath)
+            else:
+                self.filepath = filepath                    # new file with the requested name
+        self.buf.set_modified(False)
+        self.update_title()
+        self.validate()
+
+    # ---- UI --------------------------------------------------------------
+    def _build_ui(self):
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(root)
+
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        for m in ("start", "end", "top", "bottom"):
+            getattr(bar, f"set_margin_{m}")(8)
+        root.pack_start(bar, False, False, 0)
+        self.buttons = {}
+        for key, label, tip, cb in (
+            ("open", "OPEN", "Open file (Ctrl+O)", self.on_open),
+            ("save", "SAVE", "Save (Ctrl+S)", self.on_save),
+            ("saveas", "SAVE AS", "Save as... (Ctrl+Shift+S)", self.on_save_as),
+            ("validate", "VALIDATE", "Check well-formedness and jump to the error (F5)", self.on_validate),
+            ("format", "FORMAT", "Re-indent (only whitespace between tags changes) (Ctrl+Shift+F)", self.on_format),
+        ):
+            b = Gtk.Button(label=label)
+            b.set_tooltip_text(tip)
+            b.connect("clicked", cb)
+            bar.pack_start(b, False, False, 0)
+            self.buttons[key] = b
+        self.btn_wrap = Gtk.ToggleButton(label="WRAP")
+        self.btn_wrap.set_tooltip_text("Wrap long lines")
+        self.btn_wrap.connect("toggled", lambda b: self.view.set_wrap_mode(
+            Gtk.WrapMode.WORD_CHAR if b.get_active() else Gtk.WrapMode.NONE))
+        bar.pack_start(self.btn_wrap, False, False, 0)
+
+        self.lbl_check = Gtk.Label(label="")
+        self.lbl_check.set_xalign(1)
+        self.lbl_check.set_ellipsize(Pango.EllipsizeMode.END)
+        self.lbl_check.get_style_context().add_class("status")
+        ev = Gtk.EventBox()
+        ev.set_visible_window(False)
+        ev.add(self.lbl_check)
+        ev.set_tooltip_text("Click to jump to the error")
+        ev.connect("button-press-event", lambda *_: self.jump_to_error())
+        bar.pack_end(ev, True, True, 0)
+
+        # search bar (Ctrl+F)
+        self.searchbar = Gtk.SearchBar()
+        sbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.entry = Gtk.SearchEntry()
+        self.entry.set_width_chars(32)
+        self.entry.connect("search-changed", self.on_search_changed)
+        self.entry.connect("activate", lambda *_: self.find(True))
+        self.entry.connect("next-match", lambda *_: self.find(True))
+        self.entry.connect("previous-match", lambda *_: self.find(False))
+        up = Gtk.Button.new_from_icon_name("go-up-symbolic", Gtk.IconSize.BUTTON)
+        up.connect("clicked", lambda *_: self.find(False))
+        down = Gtk.Button.new_from_icon_name("go-down-symbolic", Gtk.IconSize.BUTTON)
+        down.connect("clicked", lambda *_: self.find(True))
+        for w in (self.entry, up, down):
+            sbox.pack_start(w, False, False, 0)
+        self.searchbar.add(sbox)
+        self.searchbar.connect_entry(self.entry)
+        root.pack_start(self.searchbar, False, False, 0)
+
+        # text area
+        if HAVE_SRC:
+            self.buf = GtkSource.Buffer()
+            lang = GtkSource.LanguageManager.get_default().get_language("xml")
+            if lang:
+                self.buf.set_language(lang)
+            self.buf.set_highlight_syntax(True)
+            self.buf.set_highlight_matching_brackets(True)
+            self.buf.set_max_undo_levels(-1)
+            sm = GtkSource.StyleSchemeManager.get_default()
+            sm.append_search_path(os.path.dirname(os.path.abspath(__file__)))   # run-from-folder convenience
+            sm.force_rescan()
+            scheme = sm.get_scheme(SCHEME_ID) or sm.get_scheme("oblivion")
+            if scheme:
+                self.buf.set_style_scheme(scheme)
+            self.view = GtkSource.View.new_with_buffer(self.buf)
+            self.view.set_show_line_numbers(True)
+            self.view.set_highlight_current_line(True)
+            self.view.set_auto_indent(True)
+            self.view.set_insert_spaces_instead_of_tabs(True)
+            self.view.set_tab_width(2)
+            self.view.set_indent_width(2)
+            self.view.set_smart_home_end(GtkSource.SmartHomeEndType.BEFORE)
+            self.search_ctx = GtkSource.SearchContext.new(self.buf, None)
+            self.search_ctx.get_settings().set_case_sensitive(False)
+            self.search_ctx.set_highlight(True)
+        else:
+            self.buf = Gtk.TextBuffer()
+            self.view = Gtk.TextView.new_with_buffer(self.buf)
+            self.view.get_style_context().add_class("plain")
+            self.search_ctx = None
+        self.view.set_wrap_mode(Gtk.WrapMode.NONE)
+        self.view.set_monospace(True)
+        self.view.set_left_margin(6)
+        self.view.set_top_margin(4)
+        self.buf.create_tag("xml-error", underline=Pango.Underline.ERROR)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.add(self.view)
+        root.pack_start(scroll, True, True, 0)
+
+        # bottom status bar
+        bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+        bottom.get_style_context().add_class("bottom")
+        for m in ("start", "end", "top", "bottom"):
+            getattr(bottom, f"set_margin_{m}")(6)
+        self.lbl_file = Gtk.Label(label="")
+        self.lbl_file.set_xalign(0)
+        self.lbl_file.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        self.lbl_file.get_style_context().add_class("dim")
+        self.lbl_meta = Gtk.Label(label="")
+        self.lbl_meta.get_style_context().add_class("dim")
+        self.lbl_pos = Gtk.Label(label="Ln 1, Col 1")
+        self.lbl_pos.get_style_context().add_class("dim")
+        bottom.pack_start(self.lbl_file, True, True, 0)
+        if not HAVE_SRC:
+            hint = Gtk.Label(label="plain mode: install gir1.2-gtksource-4 for highlighting and undo")
+            hint.get_style_context().add_class("dim")
+            bottom.pack_start(hint, False, False, 0)
+        bottom.pack_end(self.lbl_pos, False, False, 0)
+        bottom.pack_end(self.lbl_meta, False, False, 0)
+        root.pack_start(bottom, False, False, 0)
+
+        self.buf.connect("changed", self.on_changed)
+        self.buf.connect("modified-changed", lambda *_: self.update_title())
+        self.buf.connect("notify::cursor-position", self.update_pos)
+
+    def _build_accels(self):
+        ag = Gtk.AccelGroup()
+        self.add_accel_group(ag)
+
+        def bind(spec, fn):
+            key, mod = Gtk.accelerator_parse(spec)
+            ag.connect(key, mod, Gtk.AccelFlags.VISIBLE, lambda *a: (fn(), True)[1])
+
+        bind("<Control>o", lambda: self.on_open(None))
+        bind("<Control>s", lambda: self.on_save(None))
+        bind("<Control><Shift>s", lambda: self.on_save_as(None))
+        bind("F5", lambda: self.on_validate(None))
+        bind("<Control><Shift>f", lambda: self.on_format(None))
+        bind("<Control>f", self.show_search)
+        bind("<Control>q", self.close)
+
+    # ---- small helpers -------------------------------------------------------
+    def get_text(self):
+        return self.buf.get_text(self.buf.get_start_iter(), self.buf.get_end_iter(), True)
+
+    def set_text(self, text):
+        if HAVE_SRC:
+            self.buf.begin_not_undoable_action()
+        self.buf.set_text(text)
+        if HAVE_SRC:
+            self.buf.end_not_undoable_action()
+        self.buf.place_cursor(self.buf.get_start_iter())
+        self.buf.set_modified(False)
+
+    def set_check(self, text, kind):
+        ctx = self.lbl_check.get_style_context()
+        for c in ("ok", "err", "dim"):
+            ctx.remove_class(c)
+        ctx.add_class(kind)
+        self.lbl_check.set_text(text)
+
+    def message(self, kind, text, secondary=None):
+        d = Gtk.MessageDialog(transient_for=self, modal=True, message_type=kind,
+                              buttons=Gtk.ButtonsType.OK, text=text)
+        if secondary:
+            d.format_secondary_text(secondary)
+        d.run()
+        d.destroy()
+
+    def update_title(self):
+        name = os.path.basename(self.filepath) if self.filepath else "Untitled"
+        dot = "\u25cf " if self.buf.get_modified() else ""
+        self.set_title(f"{dot}{name}  \u2014  VaeVictis XML")
+        self.lbl_file.set_text(self.filepath or "(not saved yet)")
+        self.lbl_meta.set_text(f"{self.encoding.upper()}  \u00b7  {'CRLF' if self.crlf else 'LF'}")
+
+    def update_pos(self, *_):
+        it = self.buf.get_iter_at_mark(self.buf.get_insert())
+        self.lbl_pos.set_text(f"Ln {it.get_line() + 1}, Col {it.get_line_offset() + 1}")
+
+    def confirm_discard(self):
+        if not self.buf.get_modified():
+            return True
+        d = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.QUESTION,
+                              buttons=Gtk.ButtonsType.NONE, text="Save changes before continuing?")
+        d.format_secondary_text("Your changes will be lost if you don't save them.")
+        d.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Discard", Gtk.ResponseType.REJECT,
+                      "Save", Gtk.ResponseType.ACCEPT)
+        r = d.run()
+        d.destroy()
+        if r == Gtk.ResponseType.ACCEPT:
+            return self.save()
+        return r == Gtk.ResponseType.REJECT
+
+    # ---- validation ------------------------------------------------------------
+    def _clear_error(self):
+        self.buf.remove_tag_by_name("xml-error", self.buf.get_start_iter(), self.buf.get_end_iter())
+        self.error_pos = None
+
+    def validate(self, jump=False, auto=False):
+        text = self.get_text()
+        self._clear_error()
+        if not text.strip():
+            self.set_check("EMPTY", "dim")
+            return True
+        if auto and len(text) > LIVE_CHECK_LIMIT:
+            self.set_check("large file: press F5 to validate", "dim")
+            return True
+        err = check_xml(text)
+        if err is None:
+            self.set_check("\u2714 WELL-FORMED", "ok")
+            return True
+        line, col, msg = err
+        self.error_pos = (line - 1, col)
+        self.set_check(f"\u2716 LINE {line}, COL {col + 1}: {msg}", "err")
+        start = self.buf.get_iter_at_line_index(line - 1, col)
+        end = start.copy()
+        if not end.ends_line():
+            end.forward_to_line_end()
+        if start.equal(end) and not start.starts_line():
+            start.backward_char()
+        self.buf.apply_tag_by_name("xml-error", start, end)
+        if jump:
+            self.jump_to_error()
+        return False
+
+    def jump_to_error(self):
+        if not self.error_pos:
+            return
+        it = self.buf.get_iter_at_line_index(*self.error_pos)
+        self.buf.place_cursor(it)
+        self.view.scroll_to_iter(it, 0.1, True, 0.5, 0.4)
+        self.view.grab_focus()
+
+    def on_changed(self, *_):
+        if self.check_timer:
+            GLib.source_remove(self.check_timer)
+        self.check_timer = GLib.timeout_add(500, self._timed_check)
+
+    def _timed_check(self):
+        self.check_timer = 0
+        self.validate(auto=True)
+        return False
+
+    def on_validate(self, _b):
+        self.validate(jump=True)
+
+    # ---- format ----------------------------------------------------------------
+    def on_format(self, _b):
+        text = self.get_text()
+        if not text.strip():
+            return
+        if check_xml(text) is not None:
+            self.validate(jump=True)
+            self.message(Gtk.MessageType.WARNING, "Fix the XML errors first",
+                         "Formatting needs a well-formed document.")
+            return
+        try:
+            new = pretty_format(text)
+        except ValueError as e:
+            self.message(Gtk.MessageType.INFO, "Not formatted",
+                         f"Re-indenting could change the meaning of this document ({e}).")
+            return
+        if new == text:
+            return
+        self.buf.begin_user_action()                      # one undo step
+        self.buf.set_text(new)
+        self.buf.end_user_action()
+        self.buf.place_cursor(self.buf.get_start_iter())
+
+    # ---- search ----------------------------------------------------------------
+    def show_search(self):
+        self.searchbar.set_search_mode(True)
+        self.entry.grab_focus()
+        sel = self.buf.get_selection_bounds()
+        if sel:
+            self.entry.set_text(self.buf.get_text(sel[0], sel[1], False))
+        self.entry.select_region(0, -1)
+
+    def on_search_changed(self, entry):
+        if self.search_ctx:
+            self.search_ctx.get_settings().set_search_text(entry.get_text() or None)
+        self.find(True, keep=True)
+
+    def find(self, forward, keep=False):
+        needle = self.entry.get_text()
+        if not needle:
+            return
+        flags = Gtk.TextSearchFlags.CASE_INSENSITIVE
+        sel = self.buf.get_selection_bounds()
+        ins = self.buf.get_iter_at_mark(self.buf.get_insert())
+        if forward:
+            start = (sel[0] if keep and sel else sel[1] if sel else ins)
+            hit = start.forward_search(needle, flags, None) or \
+                self.buf.get_start_iter().forward_search(needle, flags, None)
+        else:
+            start = sel[0] if sel else ins
+            hit = start.backward_search(needle, flags, None) or \
+                self.buf.get_end_iter().backward_search(needle, flags, None)
+        if hit:
+            self.buf.select_range(hit[0], hit[1])
+            self.view.scroll_to_iter(hit[0], 0.1, True, 0.5, 0.4)
+
+    # ---- file I/O ----------------------------------------------------------------
+    def _chooser(self, title, action, accept):
+        d = Gtk.FileChooserDialog(title=title, transient_for=self, action=action)
+        d.add_buttons("Cancel", Gtk.ResponseType.CANCEL, accept, Gtk.ResponseType.OK)
+        if self.filepath:
+            d.set_current_folder(os.path.dirname(os.path.abspath(self.filepath)))
+        return d
+
+    def on_open(self, _b):
+        if not self.confirm_discard():
+            return
+        d = self._chooser("Open file", Gtk.FileChooserAction.OPEN, "Open")
+        f = Gtk.FileFilter()
+        f.set_name("XML and related (*.xml, *.xsd, *.xsl, *.svg, *.html ...)")
+        for ext in ("xml", "xsd", "xsl", "xslt", "svg", "xhtml", "rss", "atom", "plist", "kml", "gpx", "ui", "glade"):
+            f.add_pattern(f"*.{ext}")
+        d.add_filter(f)
+        every = Gtk.FileFilter()
+        every.set_name("All files")
+        every.add_pattern("*")
+        d.add_filter(every)
+        path = d.get_filename() if d.run() == Gtk.ResponseType.OK else None
+        d.destroy()
+        if path:
+            self.open_path(path)
+
+    def open_path(self, path):
+        try:
+            if os.path.getsize(path) > MAX_BYTES:
+                self.message(Gtk.MessageType.WARNING, "File too large",
+                             f"{os.path.basename(path)} is over {MAX_BYTES // 1048576} MB.")
+                return
+            with open(path, "rb") as fh:
+                raw = fh.read()
+            text, enc = decode_bytes(raw)
+        except UnicodeDecodeError:
+            self.message(Gtk.MessageType.ERROR, "Cannot decode file",
+                         "The content does not match its declared (or default UTF-8) encoding.")
+            return
+        except OSError as e:
+            self.message(Gtk.MessageType.ERROR, "Cannot open file", e.strerror or str(e))
+            return
+        self.crlf = "\r\n" in text
+        text = text.replace("\r\n", "\n")
+        self.encoding = enc
+        self.filepath = os.path.abspath(path)
+        self.set_text(text)
+        self.update_title()
+        self.validate()
+
+    def on_save(self, _b):
+        self.save()
+
+    def on_save_as(self, _b):
+        self.save(as_new=True)
+
+    def save(self, as_new=False):
+        path = self.filepath
+        if as_new or not path:
+            d = self._chooser("Save file", Gtk.FileChooserAction.SAVE, "Save")
+            d.set_do_overwrite_confirmation(True)            # the original silently overwrote files
+            d.set_current_name(os.path.basename(path) if path else "document.xml")
+            path = d.get_filename() if d.run() == Gtk.ResponseType.OK else None
+            d.destroy()
+            if not path:
+                return False
+        if self.write_file(path):
+            self.filepath = os.path.abspath(path)
+            self.buf.set_modified(False)
+            self.update_title()
+            return True
+        return False
+
+    def write_file(self, path):
+        text = self.get_text()
+        if self.crlf:
+            text = text.replace("\n", "\r\n")
+        try:
+            raw = text.encode(self.encoding)
+        except (UnicodeEncodeError, LookupError):
+            self.message(Gtk.MessageType.ERROR, "Cannot save",
+                         f"The text contains characters that {self.encoding.upper()} cannot represent. "
+                         "Remove them or change the encoding in the XML declaration.")
+            return False
+        target = os.path.realpath(path)
+        tmp = None
+        try:
+            try:
+                fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target), prefix=".vvxml_")
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(raw)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                if os.path.exists(target):
+                    shutil.copymode(target, tmp)
+                else:
+                    um = os.umask(0)
+                    os.umask(um)
+                    os.chmod(tmp, 0o666 & ~um)
+                os.replace(tmp, target)                      # atomic: never leaves a half-written file
+                tmp = None
+            except PermissionError:
+                if tmp and os.path.exists(tmp):
+                    os.remove(tmp)
+                    tmp = None
+                with open(target, "wb") as fh:               # directory not writable: write in place
+                    fh.write(raw)
+        except OSError as e:
+            self.message(Gtk.MessageType.ERROR, "Save failed", e.strerror or str(e))
+            return False
+        finally:
+            if tmp and os.path.exists(tmp):
+                os.remove(tmp)
+        return True
+
+
+if __name__ == "__main__":
+    GLib.set_prgname("vv-xml")
+    GLib.set_application_name("VaeVictis XML")
+    arg = None
+    if len(sys.argv) > 1:
+        arg = Gio.File.new_for_commandline_arg(sys.argv[1]).get_path()   # accepts paths and file:// URIs
+    win = XMLEditor(arg)
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    win.searchbar.set_search_mode(False)
+    Gtk.main()
