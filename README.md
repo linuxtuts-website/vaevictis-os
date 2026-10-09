@@ -46,6 +46,7 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
   `.conf` (tested with ProtonVPN files).
 - **Tools:** KeePassXC (offline password manager), mat2 (metadata cleaner), Panic Mode (cut the network and power off), Lynis,
   uBlock Origin preinstalled in Firefox ESR, hard-link snapshots (`v-snap`), an optional NVIDIA proprietary driver installer (`vv-nvidia`).
+- **Simple desktop apps for people coming from Windows or macOS**, so you do not need to learn heavyweight tools on day one: **Aurora** (music player), **LinPaint+** (a Paint-style editor that also takes screenshots you can edit right away), **VaeVictis PDF** (`vv-pdf`: PDF viewer and page editor) and **VaeVictis XML** (`vv-xml`: small XML editor). Aurora, `vv-pdf` and `vv-xml` use no network at all.
 - The **Welcome window** shows these settings read live from the running system, so you do not have to trust this page.
 
 ## What it does NOT do
@@ -76,6 +77,10 @@ Everything that makes the ISO is in `build/`, in plain shell and Python, readabl
 | `THREAT-MODEL.md` | what it protects against, and what it does not |
 | `SECURITY.md` | how to report a vulnerability |
 | `CHANGELOG.md` | release notes |
+
+## How it is made
+
+VaeVictis is a one-person project. The maintainer is not a professional programmer: much of the code was written with the help of AI assistants under his direction: the first versions of the desktop apps (Aurora, LinPaint+) were generated with **Gemini (Google)**; the installer, the `vv-*` tools, the HIDS and the optimisation of the apps were done with **Claude (Anthropic)**. Every release is tested on virtual and real machines (including complete LUKS installs), and the build is scripted and public. Nobody has independently audited the code yet. If you can read shell, Python or Go, a review is very welcome (see [SECURITY.md](SECURITY.md) to report problems privately).
 
 ## Warranty and licence
 
