@@ -1,0 +1,319 @@
+#!/usr/bin/env bash
+# vv-branding - icons, welcome window and login screen look for the VaeVictis chroot
+#
+#   vv-branding         apply (safe to repeat; replaced files are backed up next to the chroot)
+#
+# What it does
+#   1. installs SVG icons (hicolor/scalable) for the VaeVictis apps
+#   2. sets Icon= in the .desktop files of those apps (matched by their Exec line)
+#   3. installs the vv-welcome file that sits next to this script (dark window, its own icon,
+#      live security status) so the dock no longer shows a generic icon while it is open
+#   4. removes the "debian 13" logo from the GDM login screen
+#   5. system identity: os-release and issue say VaeVictis and point to https://linuxtuts.online
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+CH="${VV_CHROOT:-/run/media/user/Mio/Backup_VaeVictis_Completo/vaevictis/new/chroot}"
+CH="$(realpath -m "$CH")"
+VVC="$HERE/vv-chroot"
+
+die() { echo "vv-branding: $*" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || exec sudo -E VV_CHROOT="$CH" "$0" "$@"
+[ -f "$CH/etc/debian_version" ] && [ "$CH" != "/" ] || die "not a Debian root filesystem: $CH"
+[ -x "$VVC" ] || [ -n "${VV_SKIP_CHROOT:-}" ] || die "vv-chroot must be next to this script ($VVC)"
+
+BK="$(dirname "$CH")/vv-backups/$(date +%Y%m%d-%H%M%S)"
+bak() { local rel="${1#$CH/}"; [ -e "$1" ] || return 0; mkdir -p "$BK"; (cd "$CH" && cp -a --parents "$rel" "$BK/"); }
+in_chroot() {
+    if [ -n "${VV_SKIP_CHROOT:-}" ]; then echo "  [skipped in test] $(echo "$1" | head -c 200)"; return 0; fi
+    "$VVC" run /bin/sh -c "$1"
+}
+
+# ------------------------------------------------------------------ 1. icons
+ICONDIR="$CH/usr/share/icons/hicolor/scalable/apps"
+install -d -m 0755 "$ICONDIR"
+
+mk_icon() {   # mk_icon NAME   (glyph on stdin, drawn on a 128x128 canvas)
+    {
+        cat <<'HEAD'
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1c1c22"/><stop offset="1" stop-color="#0b0b0e"/></linearGradient>
+    <linearGradient id="g" gradientUnits="userSpaceOnUse" x1="24" y1="24" x2="104" y2="104"><stop offset="0" stop-color="#35f0a1"/><stop offset="1" stop-color="#8b7cff"/></linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg)" stroke="#2a2a32" stroke-width="2"/>
+HEAD
+        cat
+        echo '</svg>'
+    } > "$ICONDIR/$1.svg"
+    chmod 0644 "$ICONDIR/$1.svg"
+}
+
+mk_icon vv-aurora <<'EOF'
+  <g fill="none" stroke-linecap="round" stroke-width="9">
+    <path d="M20 94 C40 66 58 112 78 82 S104 70 110 76" stroke="url(#g)" opacity=".4"/>
+    <path d="M20 78 C40 50 58 96 78 66 S104 54 110 60" stroke="url(#g)" opacity=".7"/>
+    <path d="M20 62 C40 34 58 80 78 50 S104 38 110 44" stroke="url(#g)"/>
+  </g>
+EOF
+mk_icon vv-linpaint <<'EOF'
+  <g stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M96 30 L66 60" stroke="#e2e2e5" stroke-width="11"/>
+    <path d="M66 60 L52 74" stroke="#707075" stroke-width="13"/>
+    <path d="M52 74 C40 78 36 90 28 96 C44 100 60 96 64 82 Z" fill="url(#g)" stroke="url(#g)" stroke-width="4"/>
+  </g>
+  <circle cx="38" cy="38" r="7" fill="#35f0a1"/><circle cx="58" cy="30" r="5" fill="#8b7cff"/><circle cx="30" cy="58" r="5" fill="#ffb86c"/>
+EOF
+mk_icon vv-install <<'EOF'
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="11">
+    <path d="M64 28 V74 M42 54 L64 76 L86 54" stroke="url(#g)"/>
+    <path d="M32 96 H96" stroke="#e2e2e5"/>
+  </g>
+EOF
+mk_icon vv-pdf <<'EOF'
+  <path d="M38 24 H74 L92 42 V104 H38 Z" fill="#15151a" stroke="#e2e2e5" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M74 24 V42 H92" fill="none" stroke="#e2e2e5" stroke-width="4" stroke-linejoin="round"/>
+  <g stroke="url(#g)" stroke-width="6" stroke-linecap="round"><path d="M49 58 H81"/><path d="M49 71 H81"/><path d="M49 84 H68"/></g>
+EOF
+mk_icon vv-snap <<'EOF'
+  <g fill="none" stroke="url(#g)" stroke-width="8" stroke-linejoin="round" stroke-linecap="round">
+    <rect x="26" y="44" width="76" height="52" rx="11"/>
+    <path d="M48 44 L54 32 H74 L80 44"/>
+    <circle cx="64" cy="70" r="15"/>
+  </g>
+EOF
+mk_icon vv-welcome <<'EOF'
+  <path d="M30 38 L64 96 L98 38" fill="none" stroke="url(#g)" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+EOF
+mk_icon vv-vpn <<'EOF'
+  <path d="M64 24 L96 36 V66 C96 86 82 98 64 106 C46 98 32 86 32 66 V36 Z" fill="none" stroke="url(#g)" stroke-width="8" stroke-linejoin="round"/>
+  <circle cx="64" cy="62" r="8" fill="#e2e2e5"/><path d="M64 68 V82" stroke="#e2e2e5" stroke-width="7" stroke-linecap="round"/>
+EOF
+mk_icon vv-panic <<'EOF'
+  <circle cx="64" cy="64" r="36" fill="none" stroke="#ff5d5d" stroke-width="9"/>
+  <path d="M64 42 V68" stroke="#ff5d5d" stroke-width="10" stroke-linecap="round"/><circle cx="64" cy="84" r="6" fill="#ff5d5d"/>
+EOF
+echo "== icons: 8 SVG files in /usr/share/icons/hicolor/scalable/apps"
+
+# The XML editor (vv-xml) is gone from the image: LibreOffice is installed. Remove what an earlier build left behind,
+# so the ISO has no launcher, icon or colour scheme of a program that is not there.
+echo "== removed: vv-xml (XML editor)"
+for f in usr/local/bin/vv-xml usr/local/bin/vaevictis-dark.xml \
+         usr/share/applications/vv-xml.desktop usr/local/share/applications/vv-xml.desktop \
+         etc/skel/Desktop/vv-xml.desktop etc/skel/.local/share/applications/vv-xml.desktop \
+         usr/share/gtksourceview-4/styles/vaevictis-dark.xml \
+         usr/share/icons/hicolor/scalable/apps/vv-xml.svg; do
+    if [ -e "$CH/$f" ]; then rm -f "$CH/$f" && echo "  removed /$f"; fi
+done
+
+# ------------------------------------------------------------------ 2. .desktop files
+declare -A MAP=(
+    [aurora]=vv-aurora          [linpaint]=vv-linpaint     [vaevictis_install]=vv-install
+    [install-vaevictis]=vv-install  [vv-pdf]=vv-pdf
+    [v-snap]=vv-snap            [vv-welcome]=vv-welcome    [vv-panic]=vv-panic   [vv-vpn]=vv-vpn
+)
+declare -A NAMEMAP=(
+    ['^Name=.*vaevictis.*snap']=vv-snap    ['^Name=.*vaevictis.*pdf']=vv-pdf
+    ['^Name=.*vaevictis.*vpn']=vv-vpn      ['^Name=.*vaevictis.*install']=vv-install  ['^Name=.*vaevictis.*panic']=vv-panic
+    ['^Name=aurora']=vv-aurora             ['^Name=lin ?paint']=vv-linpaint
+)
+echo "== .desktop files"
+patched=0
+for dir in usr/share/applications usr/local/share/applications etc/xdg/autostart etc/skel/Desktop etc/skel/.local/share/applications; do
+    [ -d "$CH/$dir" ] || continue
+    for f in "$CH/$dir"/*.desktop; do
+        [ -f "$f" ] || continue
+        exec_line="$(grep -m1 '^Exec=' "$f" || true)"; [ -n "$exec_line" ] || continue
+        hit=0
+        for key in "${!MAP[@]}"; do
+            if echo "$exec_line" | grep -Eq "[ /=]${key}([ .\"'%]|$)"; then icon="${MAP[$key]}"; hit=1; break; fi
+        done
+        if [ "$hit" = 0 ]; then                 # fallback: the launcher's visible name
+            name_line="$(grep -m1 '^Name=' "$f" || true)"
+            for key in "${!NAMEMAP[@]}"; do
+                if echo "$name_line" | grep -Eqi "$key"; then icon="${NAMEMAP[$key]}"; hit=1; break; fi
+            done
+        fi
+        if [ "$hit" = 1 ]; then
+            if grep -q '^Icon=' "$f"; then sed -i "s|^Icon=.*|Icon=$icon|" "$f"; else printf 'Icon=%s\n' "$icon" >> "$f"; fi
+            echo "  ${f#$CH/}  ->  Icon=$icon"; patched=$((patched+1))
+        elif grep -qi '^Name=.*vaevictis' "$f"; then
+            echo "  NOT matched: ${f#$CH/}  (send me its Exec= line)"
+        fi
+    done
+done
+[ "$patched" -gt 0 ] || echo "  (no matching .desktop files found: check the Exec= lines of your launchers)"
+
+# ------------------------------------------------------------------ 3. welcome window
+echo "== welcome window"
+bak "$CH/usr/local/bin/vv-welcome"
+install -d -m 0755 "$CH/usr/local/bin"
+[ -f "$HERE/vv-welcome" ] || die "vv-welcome must be next to this script ($HERE/vv-welcome)"
+install -m 0755 "$HERE/vv-welcome" "$CH/usr/local/bin/vv-welcome"
+bak "$CH/usr/share/applications/vv-welcome.desktop"
+cat > "$CH/usr/share/applications/vv-welcome.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=VaeVictis Welcome
+Comment=Welcome to VaeVictis OS
+Exec=/usr/local/bin/vv-welcome --force
+Icon=vv-welcome
+Terminal=false
+NoDisplay=true
+StartupWMClass=vv-welcome
+Categories=Utility;
+EOF
+
+# Opens by itself ONCE per user: vv-welcome writes ~/.config/vaevictis/welcome-seen on its first start and exits
+# silently afterwards. The autostart entry must NOT use --force (that always opens the window), and there must be
+# only one such entry: remove any older one that starts vv-welcome (wherever it came from).
+echo "== welcome: one autostart entry, no --force"
+for d in etc/xdg/autostart etc/skel/.config/autostart; do
+    [ -d "$CH/$d" ] || continue
+    for f in "$CH/$d"/*.desktop; do
+        [ -f "$f" ] || continue
+        [ "$(basename "$f")" = "vv-welcome.desktop" ] && continue
+        if grep -q '^Exec=.*vv-welcome' "$f"; then rm -f "$f"; echo "  removed ${f#$CH/}"; fi
+    done
+done
+rm -f "$CH/etc/skel/.config/autostart/vv-welcome.desktop"
+install -d -m 0755 "$CH/etc/xdg/autostart"
+cat > "$CH/etc/xdg/autostart/vv-welcome.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=VaeVictis Welcome
+Exec=/usr/local/bin/vv-welcome
+Icon=vv-welcome
+Terminal=false
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
+EOF
+echo "  /etc/xdg/autostart/vv-welcome.desktop  (Exec without --force)"
+
+# ------------------------------------------------------------------ 4. login screen logo
+echo "== top bar: removable drive icon (eject button) when a USB stick is plugged in"
+install -d -m 0755 "$CH/etc/dconf/db/vaevictis.d" "$CH/etc/dconf/profile"
+# enabled-extensions is ONE list: keep whatever other system defaults already enable and add ours
+python3 - "$CH" <<'PYX'
+import glob, re, sys
+ch = sys.argv[1]
+# drive-menu: eject button in the top bar. dash-to-dock: the dock also shows mounted USB sticks and disks
+# (this is what made the stick appear in the tests; package gnome-shell-extension-dashtodock).
+exts = ["drive-menu@gnome-shell-extensions.gcampax.github.com", "dash-to-dock@micxgx.gmail.com"]
+found = []
+for pat in (ch + "/etc/dconf/db/*.d/*", ch + "/usr/share/glib-2.0/schemas/*.override"):
+    for f in sorted(glob.glob(pat)):
+        if f.endswith("10-extensions-vaevictis"):
+            continue
+        try:
+            txt = open(f, errors="replace").read()
+        except OSError:
+            continue
+        for m in re.finditer(r"^\s*enabled-extensions\s*=\s*\[(.*?)\]", txt, re.M):
+            found += re.findall(r"'([^']+)'", m.group(1))
+lst = []
+for e in found + exts:
+    if e not in lst:
+        lst.append(e)
+open(ch + "/etc/dconf/db/vaevictis.d/10-extensions-vaevictis", "w").write("[org/gnome/shell]\nenabled-extensions=%r\n" % lst)
+print("  enabled-extensions default:", lst)
+PYX
+if [ ! -f "$CH/etc/dconf/profile/user" ]; then
+    printf 'user-db:user\nsystem-db:vaevictis\n' > "$CH/etc/dconf/profile/user"
+elif ! grep -q '^system-db:vaevictis' "$CH/etc/dconf/profile/user"; then
+    sed -i '0,/^user-db:user.*/s//&\nsystem-db:vaevictis/' "$CH/etc/dconf/profile/user"
+    grep -q '^system-db:vaevictis' "$CH/etc/dconf/profile/user" || printf 'system-db:vaevictis\n' >> "$CH/etc/dconf/profile/user"
+fi
+# A profile that lists a system database which does not exist makes EVERY program that reads settings log
+# "unable to open file /etc/dconf/db/local ... expect degraded performance". Drop the lines of missing ones.
+for n in local site; do
+    [ -e "$CH/etc/dconf/db/$n" ] || sed -i "/^system-db:$n[[:space:]]*\$/d" "$CH/etc/dconf/profile/user"
+done
+
+echo "== boot menu theme (the menu sits in the centre, below the wallpaper title)"
+if [ -f "$HERE/vv-grub-theme" ]; then
+    install -d -m 0755 "$CH/usr/local/sbin"
+    install -m 0755 "$HERE/vv-grub-theme" "$CH/usr/local/sbin/vv-grub-theme"
+    echo "  /usr/local/sbin/vv-grub-theme (the installer runs it; the live ISO has its own menu)"
+else
+    echo "  skipped: vv-grub-theme is not next to this script (installed systems keep GRUB's plain menu)"
+fi
+
+echo "== login screen: no Debian logo"
+install -d -m 0755 "$CH/etc/dconf/profile" "$CH/etc/dconf/db/gdm.d"
+# The login screen runs as the user "Debian-gdm", and Debian gives that user the dconf profile of the same name
+# (a link to Debian's "gdm" profile, which has no system database). So BOTH names get Debian's own profile with our
+# "gdm" system database added on top; Debian's settings underneath stay as they are.
+GDMP="$(mktemp)"
+if [ -f "$CH/usr/share/dconf/profile/gdm" ]; then cat "$CH/usr/share/dconf/profile/gdm" > "$GDMP"
+else printf 'user-db:user\nfile-db:/var/lib/gdm3/greeter-dconf-defaults\n' > "$GDMP"; fi
+grep -q '^system-db:gdm' "$GDMP" || sed -i '0,/^user-db:user.*/s//&\nsystem-db:gdm/' "$GDMP"
+grep -q '^system-db:gdm' "$GDMP" || printf 'system-db:gdm\n' >> "$GDMP"
+for n in gdm Debian-gdm; do
+    bak "$CH/etc/dconf/profile/$n"
+    install -m 0644 "$GDMP" "$CH/etc/dconf/profile/$n"
+done
+rm -f "$GDMP"
+# The LAST file in gdm.d wins, so ours is named 99-: any other file that sets the logo (Debian ships one) loses.
+rm -f "$CH/etc/dconf/db/gdm.d/10-vaevictis"
+cat > "$CH/etc/dconf/db/gdm.d/99-vaevictis" <<'EOF'
+[org/gnome/login-screen]
+logo=''
+EOF
+
+# ------------------------------------------------------------------ 5. system identity
+OS_ID="${VV_OS_ID:-vaevictis}"
+echo "== system identity (os-release, issue)"
+in_chroot "dpkg-divert --list /usr/lib/os-release | grep -q . || dpkg-divert --local --no-rename --divert /usr/lib/os-release.debian --add /usr/lib/os-release"
+install -d -m 0755 "$CH/usr/lib"
+bak "$CH/usr/lib/os-release"
+cat > "$CH/usr/lib/os-release" <<EOF
+PRETTY_NAME="VaeVictis OS"
+NAME="VaeVictis OS"
+VERSION_ID="1.0"
+VERSION="1.0 (Hardened)"
+VERSION_CODENAME=trixie
+ID=$OS_ID
+ID_LIKE=debian
+HOME_URL="https://linuxtuts.online"
+SUPPORT_URL="https://linuxtuts.online"
+BUG_REPORT_URL="https://linuxtuts.online"
+LOGO=vv-welcome
+EOF
+[ -L "$CH/etc/os-release" ] || cp "$CH/usr/lib/os-release" "$CH/etc/os-release"
+printf 'VaeVictis OS \\n \\l\n\n' > "$CH/etc/issue"
+printf 'VaeVictis OS\n' > "$CH/etc/issue.net"
+if [ -f "$CH/etc/default/grub" ]; then
+    if grep -q '^GRUB_DISTRIBUTOR=' "$CH/etc/default/grub"; then sed -i 's|^GRUB_DISTRIBUTOR=.*|GRUB_DISTRIBUTOR="VaeVictis"|' "$CH/etc/default/grub"
+    else echo 'GRUB_DISTRIBUTOR="VaeVictis"' >> "$CH/etc/default/grub"; fi
+fi
+# ID_LIKE=debian and VERSION_CODENAME=trixie stay on purpose: apt, unattended-upgrades and GNOME rely on them.
+# Safety net: if the automatic security updates no longer recognise the release, fall back to ID=debian.
+if [ "$OS_ID" != "debian" ]; then
+    if ! in_chroot "command -v unattended-upgrade >/dev/null 2>&1 || exit 0; out=\$(unattended-upgrade --dry-run -d 2>&1 | grep -i 'allowed origins' | head -1); echo \"  \$out\"; echo \"\$out\" | grep -q trixie"; then
+        sed -i 's/^ID=.*/ID=debian/' "$CH/usr/lib/os-release"
+        echo "  WARNING: unattended-upgrades did not recognise the release with ID=$OS_ID; fell back to ID=debian."
+    fi
+fi
+
+echo "== translation fixes (launchers)"
+for f in "$CH/usr/share/applications/v-snap.desktop" "$CH/etc/skel/Desktop/v-snap.desktop"; do
+    if [ -f "$f" ] && grep -q 'Premi Invio per chiudere' "$f"; then
+        sed -i 's/\[Premi Invio per chiudere\]/[Press Enter to close]/' "$f"; echo "  ${f#$CH/}"
+    fi
+done
+
+# ------------------------------------------------------------------ in the chroot
+echo "== inside the chroot: caches"
+in_chroot "
+command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -f -t /usr/share/icons/hicolor || echo 'gtk-update-icon-cache not found (package libgtk-3-bin)'
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || true
+command -v dconf >/dev/null 2>&1 || apt-get install -y --no-install-recommends dconf-cli
+dconf update && echo 'dconf database updated'
+"
+
+echo
+echo "Done. Backups of replaced files: $BK (only if something was replaced)"

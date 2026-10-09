@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install VaeVictis OS
+Comment=Install the hardened system to disk
+Exec=bash -c "sudo /usr/local/bin/vaevictis_install.sh 2>&1 | tee /tmp/vaevictis-install.log; echo; read -rp 'Press Enter to close this window... ' _"
+Icon=vv-install
+Terminal=true
+Categories=System;

@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+"""
+vv-vpn-helper - privileged backend for VaeVictis VPN (always run through pkexec).
+
+  list            rescan /etc/wireguard, refresh the public index, print the names
+  up NAME [killswitch]   wg-quick up NAME; opens the server's UDP port in the firewall; with "killswitch",
+                         then blocks every packet that does not go through the tunnel
+  down NAME       wg-quick down NAME (and removes the kill switch: you asked to disconnect)
+  ks-on NAME      switch the kill switch on for a tunnel that is already up
+  ks-off          switch the kill switch off
+  import NAME      read a .conf from stdin and install it as /etc/wireguard/NAME.conf
+
+Everything coming from the caller is validated: NAME must be a plain interface name
+(never a path), and imported configs may not contain command hooks that wg-quick
+would run as root (PreUp/PostUp/PreDown/PostDown).
+
+IPv6: VaeVictis boots with ipv6.disable=1, so the kernel has no IPv6 at all and wg-quick dies on the
+IPv6 address and the ::/0 route that provider configs (ProtonVPN, ...) usually contain. When IPv6 is
+missing, "up" removes the IPv6 entries from Address, DNS and AllowedIPs (the original is kept as
+NAME.conf.orig). Nothing can leak over IPv6 on a system that has none.
+"""
+import ipaddress
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+CONF_DIR = "/etc/wireguard"
+STATE_DIR = "/var/lib/vv-vpn"
+INDEX = os.path.join(STATE_DIR, "nodes")
+WG_QUICK = "/usr/bin/wg-quick"
+WG = "/usr/bin/wg"
+NFT = "/usr/sbin/nft"
+RUN_DIR = "/run/vv-vpn"                          # tmpfs: gone at reboot, like the nftables rules themselves
+KS_FLAG = os.path.join(RUN_DIR, "killswitch")    # exists while the kill switch is on; holds the interface name
+NAME_RE = re.compile(r"^[A-Za-z0-9_=+.-]{1,15}$")
+HOOKS_RE = re.compile(r"^\s*(PreUp|PostUp|PreDown|PostDown)\s*=", re.I | re.M)
+MAX_CONF = 64 * 1024
+
+
+def fail(msg, code=1):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def nodes():
+    try:
+        names = [f[:-5] for f in os.listdir(CONF_DIR) if f.endswith(".conf")]
+    except FileNotFoundError:
+        names = []
+    return sorted(n for n in names if NAME_RE.match(n))
+
+
+def write_index():
+    """World-readable list of names only (the configs themselves hold private keys)."""
+    os.makedirs(STATE_DIR, exist_ok=True)
+    os.chmod(STATE_DIR, 0o755)
+    tmp = INDEX + ".tmp"
+    with open(tmp, "w") as fh:
+        fh.write("".join(n + "\n" for n in nodes()))
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, INDEX)
+
+
+def check_name(name):
+    if not NAME_RE.match(name or ""):
+        fail("Invalid node name (allowed: letters, digits and _ = + . - , max 15 chars).")
+    return name
+
+
+def conf_text(name):
+    with open(os.path.join(CONF_DIR, name + ".conf"), encoding="utf-8", errors="replace") as fh:
+        return fh.read()
+
+
+def conf_ports(text):
+    """UDP ports of every 'Endpoint = host:port' line."""
+    ports = set()
+    for m in re.finditer(r"^\s*Endpoint\s*=\s*(\S+)\s*$", text, re.M | re.I):
+        port = m.group(1).rsplit(":", 1)[-1]
+        if port.isdigit() and 0 < int(port) < 65536:
+            ports.add(int(port))
+    return sorted(ports)
+
+
+def conf_full_tunnel(text):
+    """True when AllowedIPs sends all IPv4 traffic through the tunnel."""
+    return any("0.0.0.0/0" in m.group(1)
+               for m in re.finditer(r"^\s*AllowedIPs\s*=\s*(.*)$", text, re.M | re.I))
+
+
+def ipv6_available():
+    return os.path.isdir("/proc/sys/net/ipv6")
+
+
+def strip_ipv6(text):
+    """The config without IPv6 entries in Address, DNS and AllowedIPs.
+    None when there is nothing to remove, or when removing would leave no IPv4 address/route."""
+    out, changed = [], False
+    for line in text.splitlines(keepends=True):
+        m = re.match(r"^(\s*(Address|DNS|AllowedIPs)\s*=\s*)(.*?)(\r?\n?)$", line, re.I)
+        if m:
+            items = [x.strip() for x in m.group(3).split(",") if x.strip()]
+            v4 = [x for x in items if ":" not in x]
+            if len(v4) != len(items):
+                changed = True
+                if not v4:
+                    if m.group(2).lower() == "dns":
+                        continue                       # only IPv6 DNS servers: drop the line
+                    return None                        # no IPv4 address/route left: do not touch the file
+                line = m.group(1) + ", ".join(v4) + m.group(4)
+        out.append(line)
+    return "".join(out) if changed else None
+
+
+def drop_ipv6_from_conf(name, text):
+    """Rewrite /etc/wireguard/NAME.conf without IPv6 (original kept once as NAME.conf.orig). Returns the new text."""
+    fixed = strip_ipv6(text)
+    if fixed is None:
+        return text
+    path = os.path.join(CONF_DIR, name + ".conf")
+    orig = path + ".orig"
+    if not os.path.exists(orig):
+        shutil.copy2(path, orig)
+        os.chmod(orig, 0o600)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(fixed)
+    os.replace(tmp, path)
+    print("IPv6 is switched off on this system: removed the IPv6 entries from the config "
+          f"(original kept as {name}.conf.orig).", file=sys.stderr)
+    return fixed
+
+
+def open_firewall_ports(ports):
+    """The system firewall lets WireGuard out on its configured ports only (51820 by default).
+    Open the ports this config uses, until the next boot or firewall reload. No firewall table: nothing to do."""
+    for port in ports:
+        subprocess.run([NFT, "add", "element", "inet", "vv_filter", "vpn_ports", "{", str(port), "}"],
+                       capture_output=True)
+
+
+def live_endpoints(name):
+    """(ip, port) of the servers the running tunnel talks to, as WireGuard resolved them."""
+    r = subprocess.run([WG, "show", name, "endpoints"], capture_output=True, text=True)
+    if r.returncode != 0:
+        fail(f"'{name}' is not an active tunnel.")
+    found = []
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) != 2 or ":" not in parts[1]:
+            continue
+        host, port = parts[1].rsplit(":", 1)
+        try:
+            found.append((ipaddress.ip_address(host.strip("[]")), int(port)))
+        except ValueError:
+            continue
+    return found
+
+
+def ks_rules(iface, endpoints):
+    lines = ['oif "lo" accept',
+             f'oifname "{iface}" accept']
+    for ip, port in endpoints:
+        lines.append(f"{'ip6' if ip.version == 6 else 'ip'} daddr {ip} udp dport {port} accept")
+    lines += ["udp sport 68 udp dport 67 accept",        # DHCP, so the network itself keeps working
+              "udp sport 546 udp dport 547 accept"]
+    body = "\n        ".join(lines)
+    return (f"add table inet vv_killswitch\n"
+            f"delete table inet vv_killswitch\n"
+            f"table inet vv_killswitch {{\n"
+            f"    chain output {{\n"
+            f"        type filter hook output priority -150; policy drop;\n"
+            f"        {body}\n"
+            f"    }}\n"
+            f"}}\n")
+
+
+def ks_on(name):
+    if not conf_full_tunnel(conf_text(name)):
+        fail("The kill switch needs a full-tunnel config (AllowedIPs = 0.0.0.0/0): "
+             "with this config part of your traffic is meant to leave outside the tunnel.")
+    endpoints = live_endpoints(name)
+    if not endpoints:
+        fail("Cannot find the server address of this tunnel: kill switch NOT activated.")
+    r = subprocess.run([NFT, "-f", "-"], input=ks_rules(name, endpoints), capture_output=True, text=True)
+    if r.returncode != 0:
+        fail("Kill switch NOT activated (nftables refused the rules):\n" + r.stderr.strip())
+    os.makedirs(RUN_DIR, mode=0o755, exist_ok=True)
+    with open(KS_FLAG, "w") as fh:
+        fh.write(name + "\n")
+    os.chmod(KS_FLAG, 0o644)
+
+
+def ks_off():
+    subprocess.run([NFT, "delete", "table", "inet", "vv_killswitch"], capture_output=True)
+    try:
+        os.remove(KS_FLAG)
+    except FileNotFoundError:
+        pass
+
+
+def main():
+    if os.geteuid() != 0:
+        fail("This helper must run as root (use pkexec).", 2)
+    os.umask(0o022)
+    args = sys.argv[1:]
+    if not args:
+        fail("usage: vv-vpn-helper list | up NAME [killswitch] | down NAME | ks-on NAME | ks-off | import NAME", 2)
+    cmd = args[0]
+
+    if cmd == "list" and len(args) == 1:
+        write_index()
+        print("\n".join(nodes()))
+        return
+
+    if cmd in ("up", "down") and len(args) in (2, 3):
+        name = check_name(args[1])
+        want_ks = len(args) == 3 and args[2] == "killswitch" and cmd == "up"
+        if len(args) == 3 and not want_ks:
+            fail("usage: vv-vpn-helper up NAME [killswitch] | down NAME", 2)
+        if not os.path.isfile(os.path.join(CONF_DIR, name + ".conf")):
+            fail(f"No config named '{name}' in {CONF_DIR}.")
+        write_index()
+        if cmd == "up":
+            text = conf_text(name)
+            if not ipv6_available():
+                text = drop_ipv6_from_conf(name, text)
+            if want_ks and not conf_full_tunnel(text):
+                fail("The kill switch needs a full-tunnel config (AllowedIPs = 0.0.0.0/0). "
+                     "Connect without the kill switch, or use another config.")
+            ks_off()                       # a reconnect needs the normal network to find the server
+            open_firewall_ports(conf_ports(text))
+            rc = subprocess.run([WG_QUICK, "up", name]).returncode     # stderr goes to the GUI
+            if rc != 0:
+                sys.exit(rc)
+            if want_ks:
+                ks_on(name)                # fail() says so loudly: the tunnel is up but NOT protected
+            return
+        rc = subprocess.run([WG_QUICK, "down", name]).returncode
+        ks_off()                           # the user chose to disconnect: back to the normal network
+        sys.exit(rc)
+
+    if cmd == "ks-on" and len(args) == 2:
+        name = check_name(args[1])
+        if not os.path.isfile(os.path.join(CONF_DIR, name + ".conf")):
+            fail(f"No config named '{name}' in {CONF_DIR}.")
+        ks_on(name)
+        return
+
+    if cmd == "ks-off" and len(args) == 1:
+        ks_off()
+        return
+
+    if cmd == "import" and len(args) == 2:
+        name = check_name(args[1])
+        data = sys.stdin.buffer.read(MAX_CONF + 1)
+        if len(data) > MAX_CONF:
+            fail("Config file is too large.")
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            fail("Config file is not valid UTF-8 text.")
+        if not (re.search(r"^\s*\[Interface\]", text, re.M | re.I)
+                and re.search(r"^\s*PrivateKey\s*=", text, re.M | re.I)):
+            fail("This does not look like a WireGuard client config ([Interface] + PrivateKey).")
+        if HOOKS_RE.search(text):
+            fail("Refused: the config contains PreUp/PostUp/PreDown/PostDown commands, which "
+                 "wg-quick would run as root. If you really need them, review the file and copy it "
+                 "to /etc/wireguard yourself.")
+        os.makedirs(CONF_DIR, mode=0o700, exist_ok=True)
+        dest = os.path.join(CONF_DIR, name + ".conf")
+        try:
+            fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            fail(f"A config named '{name}' already exists.")
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        write_index()
+        print(f"Imported {name}")
+        return
+
+    fail("usage: vv-vpn-helper list | up NAME [killswitch] | down NAME | ks-on NAME | ks-off | import NAME", 2)
+
+
+if __name__ == "__main__":
+    main()

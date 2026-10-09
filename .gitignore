@@ -1,0 +1,15 @@
+# images and test disks are far too big for git: they are published as release assets
+*.iso
+*.qcow2
+*.img
+iso-out/
+release/
+vv-backups/
+*.fd
+# personal
+aliases-user.txt
+__pycache__/
+*.pyc
+*.orig
+*.bak
+*.tmp

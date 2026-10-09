@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# vv-iso - build the VaeVictis live ISO from the chroot and test it in QEMU
+#
+#   vv-iso build [--release]   squashfs + GRUB (BIOS+UEFI) -> iso-out/vaevictis-DATE.iso
+#                              (default: fast zstd; --release: xz, smaller, refuses an unsealed chroot)
+#   vv-iso run [QEMU args]     boot the newest ISO in QEMU, BIOS mode
+#   vv-iso run-uefi [args]     boot the newest ISO in QEMU, UEFI mode (OVMF)
+#   vv-iso disk [SIZE]         create a blank test disk (qcow2, default 25G) to try the installer
+#   vv-iso install [bios|uefi] boot the newest ISO with the blank test disk attached: run the installer inside
+#   vv-iso boot [bios|uefi]    boot the test disk alone: this is the INSTALLED system, no ISO
+#
+# Variables: VV_CHROOT (chroot path), VV_OUT (output dir), VV_BOOT_OPTS, VV_HARDEN_OPTS (kernel options)
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+CH="${VV_CHROOT:-/run/media/user/Mio/Backup_VaeVictis_Completo/vaevictis/new/chroot}"
+CH="$(realpath -m "$CH")"
+OUT="${VV_OUT:-$HERE/iso-out}"
+BOOT_OPTS="${VV_BOOT_OPTS:-boot=live components}"      # no "quiet" anywhere (test or release): boot messages stay visible
+# Hardening that works on ordinary hardware. Deliberately NOT here: lockdown=, module.sig_enforce (break NVIDIA),
+# mitigations=nosmt (halves the threads), iommu=force (crashes on some firmware).
+# systemd.gpt_auto=0 stops systemd from switching on swap partitions it finds on the host's disks.
+HARDEN_OPTS="${VV_HARDEN_OPTS:-ipv6.disable=1 slab_nomerge init_on_alloc=1 init_on_free=1 page_alloc.shuffle=1 randomize_kstack_offset=on vsyscall=none debugfs=off tsx=off systemd.gpt_auto=0}"
+
+die() { echo "vv-iso: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die "missing tool: $1 ($2)"; }
+latest_iso() { ls -t "$OUT"/vaevictis-*.iso 2>/dev/null | head -1; }
+
+# Menu of the live ISO: GRUB theme (wallpaper + bright cyan entries, same look as the installed system) and grub.cfg.
+# If the theme cannot load, the plain text menu is dark red on black (VGA red).
+# Keep the colours in step with vv-grub-theme. Without the wallpaper in the chroot the menu stays plain text.
+live_menu() {                                  # live_menu WORKDIR RELEASE
+    local work="$1" release="$2" Q="" fontline="" head=""
+    local TH="$work/iso/boot/grub/themes/vaevictis" WP="$CH/usr/share/backgrounds/vaevictis.png"
+    # no "quiet", not even in release: the boot messages stay visible (transparency, and you can read problems)
+    if [ -f "$WP" ]; then
+        mkdir -p "$TH"; cp -L "$WP" "$TH/background.png"
+        if [ -f "$CH/usr/share/grub/unicode.pf2" ]; then
+            cp "$CH/usr/share/grub/unicode.pf2" "$TH/unicode.pf2"; fontline='terminal-font: "unicode"'
+        fi
+        cat > "$TH/theme.txt" <<EOT
+# VaeVictis OS live menu: wallpaper as it is, entries in bright cyan
+desktop-image: "background.png"
+title-text: ""
+terminal-left: "0"
+terminal-top: "0"
+terminal-width: "100%"
+terminal-height: "100%"
+terminal-border: "0"
+$fontline
+
++ boot_menu {
+    left = 10%
+    width = 80%
+    top = 68%
+    height = 28%
+    item_height = 24
+    item_spacing = 6
+    item_color = "#00b8e6"
+    selected_item_color = "#8ff3ff"
+}
+EOT
+        head='if [ -f /boot/grub/themes/vaevictis/theme.txt ]; then
+    insmod all_video
+    insmod gfxterm
+    insmod gfxmenu
+    insmod png
+    set gfxmode=auto
+    terminal_output gfxterm
+    background_image -m stretch /boot/grub/themes/vaevictis/background.png
+    if [ -f /boot/grub/themes/vaevictis/unicode.pf2 ]; then loadfont /boot/grub/themes/vaevictis/unicode.pf2; fi
+    set theme=/boot/grub/themes/vaevictis/theme.txt
+fi'
+    fi
+    cat > "$work/iso/boot/grub/grub.cfg" <<EOF
+set color_normal=red/black
+set color_highlight=black/light-red
+set menu_color_normal=red/black
+set menu_color_highlight=black/light-red
+$head
+set timeout=5
+set default=0
+menuentry "VaeVictis OS (live, hardened)" {
+    linux  /live/vmlinuz $BOOT_OPTS$Q $HARDEN_OPTS
+    initrd /live/initrd.img
+}
+menuentry "VaeVictis OS (live, hardened, copy to RAM: you can pull the USB stick)" {
+    linux  /live/vmlinuz $BOOT_OPTS$Q $HARDEN_OPTS toram
+    initrd /live/initrd.img
+}
+menuentry "VaeVictis OS (live, hardened, safe graphics)" {
+    linux  /live/vmlinuz $BOOT_OPTS$Q $HARDEN_OPTS nomodeset
+    initrd /live/initrd.img
+}
+menuentry "VaeVictis OS (live, compatibility: no extra hardening, IPv6 on)" {
+    linux  /live/vmlinuz $BOOT_OPTS$Q
+    initrd /live/initrd.img
+}
+EOF
+}
+
+cmd_build() {
+    local comp=(-comp zstd -Xcompression-level 3) release=0
+    [ "${1:-}" = "--release" ] && { release=1; comp=(-comp xz -b 1M); }
+    [ "$(id -u)" -eq 0 ] || exec sudo -E VV_CHROOT="$CH" VV_OUT="$OUT" VV_BOOT_OPTS="$BOOT_OPTS" "$0" build "$@"
+    [ -f "$CH/etc/debian_version" ] || die "not a Debian root filesystem: $CH"
+    need mksquashfs "squashfs-tools"; need grub-mkrescue "grub-common"; need xorriso "xorriso"; need mformat "mtools"
+    [ -d /usr/lib/grub/i386-pc ]    || die "missing grub-pc-bin (BIOS boot)"
+    [ -d /usr/lib/grub/x86_64-efi ] || die "missing grub-efi-amd64-bin (UEFI boot)"
+    local m; m="$(awk -v p="$CH/" 'index($5, p) == 1 { print $5 }' /proc/self/mountinfo)"
+    [ -z "$m" ] || die "mounts are still active under the chroot (fix: vv-chroot umount):"$'\n'"$m"
+    [ -L "$CH/vmlinuz" ] && [ -L "$CH/initrd.img" ] || die "no /vmlinuz or /initrd.img symlink in the chroot"
+    [ -s "$CH/etc/machine-id" ] && {
+        [ "$release" = 1 ] && die "chroot is not sealed (machine-id is set): run vv-chroot seal"
+        echo "WARNING: chroot not sealed (machine-id set, SSH keys/history may be inside). OK for a test ISO."
+    }
+    [ -e "$CH/etc/resolv.conf" ] && echo "WARNING: /etc/resolv.conf exists in the chroot: $(grep -E '^nameserver' "$CH/etc/resolv.conf" 2>/dev/null | tr '\n' ' ')"
+
+    local stamp work iso
+    stamp="$(date +%Y%m%d-%H%M)"
+    work="$OUT/work"; iso="$OUT/vaevictis-$stamp.iso"
+    rm -rf "$work"; mkdir -p "$work/iso/live" "$work/iso/boot/grub"
+
+    echo "[1/3] kernel and initramfs ($(readlink "$CH/vmlinuz" | sed 's#.*/vmlinuz-##'))"
+    cp -L "$CH/vmlinuz"    "$work/iso/live/vmlinuz"
+    cp -L "$CH/initrd.img" "$work/iso/live/initrd.img"
+
+    echo "[2/3] squashfs ($([ "$release" = 1 ] && echo xz || echo zstd)): this is the slow part"
+    mksquashfs "$CH" "$work/iso/live/filesystem.squashfs" "${comp[@]}" -noappend -no-progress \
+        -wildcards -e 'proc/*' 'sys/*' 'dev/*' 'run/*' 'tmp/*' 'var/tmp/*' 'etc/resolv.conf' >/dev/null
+
+    live_menu "$work" "$release"
+
+    echo "[3/3] ISO (BIOS + UEFI)"
+    grub-mkrescue -o "$iso" "$work/iso" -- -volid VAEVICTIS >/dev/null 2>&1 || die "grub-mkrescue failed"
+    rm -rf "$work"
+    # build runs as root: hand the ISO AND the folder back to the user who started it, otherwise a normal user
+    # cannot create the test disk next to the ISOs ("Permission denied")
+    if [ -n "${SUDO_UID:-}" ]; then
+        chown "$SUDO_UID:${SUDO_GID:-$SUDO_UID}" "$iso" "$OUT" 2>/dev/null || true
+    fi
+    echo "done: $iso ($(du -h "$iso" | cut -f1))"
+}
+
+cmd_run() {                                   # cmd_run bios|uefi [extra qemu args]
+    local mode="$1"; shift
+    need qemu-system-x86_64 "qemu-system-x86"
+    local iso=""
+    if [ -z "${VV_NO_ISO:-}" ]; then
+        iso="$(latest_iso)"; [ -n "$iso" ] || die "no ISO in $OUT (run: vv-iso build)"
+        echo "ISO: $(basename "$iso")  built on $(date -r "$iso" '+%d %b at %H:%M')"
+    fi
+    if [ -n "$iso" ] && [ -d "$CH/etc" ]; then                    # the classic trap: testing an ISO older than your last change
+        # "|| true": as a normal user find hits root-only folders and exits non-zero; that must never stop the VM
+        local newer; newer="$(find "$CH/etc" "$CH/usr/local" "$CH/usr/share/applications" "$CH/usr/share/icons" \
+                               -type f -newer "$iso" 2>/dev/null | head -3 || true)"
+        if [ -n "$newer" ]; then
+            echo "WARNING: the chroot changed AFTER this ISO was built, so you are testing an OLD image."
+            echo "         Run: ./vv-iso build   (files newer than the ISO:)"
+            echo "$newer" | sed 's/^/           /'
+        fi
+    fi
+    local args=(-m 4096 -smp 2 -vga virtio -display gtk -nic user,model=virtio-net-pci -usb -device usb-tablet)
+    if [ -n "$iso" ]; then args+=(-cdrom "$iso" -boot d); else args+=(-boot c); fi
+    if [ -n "${VV_DISK:-}" ]; then args+=(-drive "file=$VV_DISK,if=virtio,format=qcow2"); fi
+    if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then args+=(-enable-kvm -cpu host)
+    else echo "note: no access to /dev/kvm (add your user to the 'kvm' group): QEMU will be slow"; fi
+    if [ "$mode" = uefi ]; then
+        local code="" vars="" p
+        for p in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2/ovmf/OVMF_CODE.fd; do
+            [ -f "$p" ] && { code="$p"; break; }
+        done
+        [ -n "$code" ] || die "OVMF firmware not found (package: ovmf)"
+        if [ -n "${VV_DISK:-}" ]; then
+            # With a test disk the UEFI settings must SURVIVE between "install" and "boot": the installer writes the
+            # VaeVictis boot entry into them, exactly like the firmware of a real PC. Fresh settings on every run
+            # lose the entry and the VM falls through to PXE ("Boot0001 UEFI Misc Device ... Not Found").
+            vars="${VV_DISK%.qcow2}-OVMF_VARS.fd"
+        else
+            vars="${TMPDIR:-/tmp}/vaevictis-OVMF_VARS-$(id -u).fd"    # no disk: fresh UEFI settings on every run
+            rm -f "$vars"
+        fi
+        if [ ! -f "$vars" ]; then
+            cp "$(dirname "$code")/$(basename "$code" | sed 's/CODE/VARS/')" "$vars" 2>/dev/null \
+                || cp "$(dirname "$code")/OVMF_VARS.fd" "$vars" || die "OVMF_VARS not found"
+        fi
+        args+=(-drive "if=pflash,format=raw,readonly=on,file=$code" -drive "if=pflash,format=raw,file=$vars")
+    fi
+    echo "booting ${iso:-the test disk} ($mode)"
+    if [ -n "${VV_DRYRUN:-}" ]; then echo qemu-system-x86_64 "${args[@]}" "$@"; exit 0; fi
+    exec qemu-system-x86_64 "${args[@]}" "$@"
+}
+
+disk_path() { echo "$OUT/test-disk.qcow2"; }
+
+cmd_disk() {
+    need qemu-img "qemu-utils"
+    local f; f="$(disk_path)"
+    [ ! -e "$f" ] || die "$f already exists: delete it (rm \"$f\") to start again from a blank disk"
+    mkdir -p "$OUT"
+    rm -f "${f%.qcow2}-OVMF_VARS.fd"                  # a new blank disk starts with blank UEFI settings too
+    qemu-img create -f qcow2 "$f" "${1:-25G}" >/dev/null
+    echo "created the blank test disk $f (${1:-25G}; the file grows only as the installer writes)"
+}
+
+case "${1:-}" in
+    disk)     shift; cmd_disk "$@" ;;
+    install)  shift; [ -e "$(disk_path)" ] || cmd_disk
+              export VV_DISK; VV_DISK="$(disk_path)"; cmd_run "${1:-bios}" ;;
+    boot)     shift; [ -e "$(disk_path)" ] || die "no test disk yet: run  vv-iso install  first"
+              export VV_DISK VV_NO_ISO=1; VV_DISK="$(disk_path)"; cmd_run "${1:-bios}" ;;
+    build)    shift; cmd_build "$@" ;;
+    run)      shift; cmd_run bios "$@" ;;
+    run-uefi) shift; cmd_run uefi "$@" ;;
+    *)        sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

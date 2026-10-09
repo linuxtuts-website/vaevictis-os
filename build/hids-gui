@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+import gi
+import subprocess
+import os
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, GLib, Pango
+
+class HidsDashboard(Gtk.Window):
+    def __init__(self):
+        Gtk.Window.__init__(self, title="HIDS Security Dashboard")
+        self.set_default_size(750, 450)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_border_width(15)
+
+        # Main Container
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        self.add(vbox)
+
+        # Header
+        header = Gtk.Label()
+        header.set_markup("<span size=\"x-large\" weight=\"bold\">🛡️ HIDS Control Center</span>")
+        header.set_halign(Gtk.Align.START)
+        vbox.pack_start(header, False, False, 0)
+
+        # Log Text Area (with scroll)
+        self.scrolled = Gtk.ScrolledWindow()
+        self.scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        vbox.pack_start(self.scrolled, True, True, 0)
+
+        self.textview = Gtk.TextView()
+        self.textview.set_editable(False)
+        self.textview.set_cursor_visible(False)
+        self.textview.set_wrap_mode(Gtk.WrapMode.WORD)
+        self.textview.modify_font(Pango.FontDescription("Monospace 10"))
+        
+        # Dark theme for log area
+        provider = Gtk.CssProvider()
+        provider.load_from_data(b"textview { background-color: #1e1e1e; color: #00ff00; }")
+        context = self.textview.get_style_context()
+        context.add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        
+        self.scrolled.add(self.textview)
+
+        # Bottom Bar (Buttons)
+        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        vbox.pack_start(hbox, False, False, 0)
+
+        refresh_btn = Gtk.Button(label="🔄 Refresh List")
+        refresh_btn.connect("clicked", self.load_logs)
+        hbox.pack_start(refresh_btn, False, False, 0)
+
+        seal_btn = Gtk.Button(label="🔒 Authorize Changes & Seal System")
+        seal_btn.get_style_context().add_class("suggested-action")
+        seal_btn.connect("clicked", self.on_seal_clicked)
+        hbox.pack_end(seal_btn, False, False, 0)
+
+        # Load logs on startup and set auto-refresh
+        self.load_logs()
+        GLib.timeout_add_seconds(3, self.auto_refresh)
+
+    def auto_refresh(self):
+        self.load_logs(None)
+        return True
+
+    def load_logs(self, widget=None):
+        buf = self.textview.get_buffer()
+        log_file = "/var/log/hids.log"
+        if not os.path.exists(log_file):
+            buf.set_text("The daemon is listening. No alerts registered.")
+            return
+
+        try:
+            output = subprocess.check_output(["tail", "-n", "100", log_file], stderr=subprocess.STDOUT).decode("utf-8")
+            if not output.strip():
+                buf.set_text("No recent anomalies detected.")
+            else:
+                buf.set_text(output)
+                adj = self.scrolled.get_vadjustment()
+                adj.set_value(adj.get_upper() - adj.get_page_size())
+        except Exception as e:
+            buf.set_text(f"Error reading logs: {e}")
+
+    def on_seal_clicked(self, widget):
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text="Are you sure you want to seal the system?"
+        )
+        dialog.format_secondary_text(
+            "The current state of the system becomes the new reference. Do this ONLY for changes you made yourself: "
+            "sealing an intrusion would hide it. Package updates are recognised automatically and need no sealing."
+        )
+        response = dialog.run()
+        dialog.destroy()
+
+        if response == Gtk.ResponseType.OK:
+            subprocess.Popen(["pkexec", "/usr/libexec/systemd-sysctl-helper", "-seal"])   # arguments only, no shell
+            GLib.timeout_add(2000, self.auto_refresh)
+
+if __name__ == "__main__":
+    win = HidsDashboard()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()

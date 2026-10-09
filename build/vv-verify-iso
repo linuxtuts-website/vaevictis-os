@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# vv-verify-iso - check a finished VaeVictis ISO before you flash or upload it. Read-only: nothing is changed.
+#
+#   vv-verify-iso /path/to/vaevictis-DATE.iso        (mounts the ISO read-only, needs root)
+#   vv-verify-iso /path/to/filesystem.squashfs       (only the system image: no ISO structure checks)
+#
+# Prints OK / FAIL for every check and ends with the SHA-256. Exit status 1 if anything failed.
+# The size table below is the state of the 2026-10-09 evening build: update it when you change those files.
+set -euo pipefail
+
+die() { echo "vv-verify-iso: $*" >&2; exit 1; }
+ISO="${1:-}"
+[ -n "$ISO" ] && [ -f "$ISO" ] || die "usage: vv-verify-iso FILE.iso"
+[ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"
+command -v unsquashfs >/dev/null 2>&1 || die "missing tool: unsquashfs (apt install squashfs-tools)"
+
+M="$(mktemp -d)"; W="$(mktemp -d)"; MOUNTED=0
+cleanup() { [ "$MOUNTED" = 1 ] && umount "$M" 2>/dev/null || true; rmdir "$M" 2>/dev/null || true; rm -rf "$W"; }
+trap cleanup EXIT
+
+FAILS=0
+ok()   { printf '  OK    %s\n' "$1"; }
+bad()  { printf '  FAIL  %s\n' "$1"; FAILS=$((FAILS + 1)); }
+head_() { printf '\n== %s\n' "$1"; }
+
+case "$ISO" in
+    *.squashfs) SQ="$ISO"; IS_ISO=0 ;;
+    *) mount -o loop,ro "$ISO" "$M"; MOUNTED=1; SQ="$M/live/filesystem.squashfs"; IS_ISO=1 ;;
+esac
+[ -f "$SQ" ] || die "no live/filesystem.squashfs inside"
+
+unsquashfs -ll "$SQ" > "$W/list" 2>/dev/null || die "unsquashfs cannot read the image"
+size_of() { awk -v p="squashfs-root/$1" '$NF == p { print $3; exit }' "$W/list"; }
+exists()  { awk -v p="squashfs-root/$1" '$NF == p { f = 1; exit } END { exit !f }' "$W/list"; }
+cat_of()  { unsquashfs -cat "$SQ" "$1" 2>/dev/null; }
+pkg_ok()  { cat_of var/lib/dpkg/status | awk -v pkg="$1" '
+    BEGIN { RS = ""; FS = "\n" }
+    { p = ""; s = ""; for (i = 1; i <= NF; i++) { if ($i ~ /^Package: /) p = substr($i, 10); if ($i ~ /^Status: /) s = $i }
+      if (p == pkg && s == "Status: install ok installed") f = 1 }
+    END { exit !f }'; }
+
+head_ "ISO structure"
+if [ "$IS_ISO" = 1 ]; then
+    for f in live/vmlinuz live/initrd.img boot/grub/grub.cfg; do
+        [ -e "$M/$f" ] && ok "$f" || bad "$f is missing"
+    done
+    # UEFI: older grub-mkrescue puts boot/grub/efi.img in the ISO, newer ones append an EFI partition
+    if [ -e "$M/boot/grub/efi.img" ]; then ok "UEFI boot image (boot/grub/efi.img)"
+    elif fdisk -l "$ISO" 2>/dev/null | grep -E "^$ISO[0-9]" | grep -qi efi; then ok "UEFI boot partition (EFI partition appended to the ISO)"
+    else bad "no UEFI boot image and no EFI partition: this ISO would not boot on UEFI PCs"; fi
+    [ -d "$M/boot/grub/i386-pc" ] && ok "BIOS boot files (boot/grub/i386-pc)" || bad "no BIOS boot files"
+    grep -q 'boot=live' "$M/boot/grub/grub.cfg" && ok "live menu entries present" || bad "grub.cfg has no live entry"
+    grep -qw 'quiet' "$M/boot/grub/grub.cfg" && bad "grub.cfg still has quiet (boot messages hidden)" || ok "boot messages visible (no quiet)"
+    if [ -f "$M/boot/grub/themes/vaevictis/theme.txt" ] && [ -f "$M/boot/grub/themes/vaevictis/background.png" ]; then
+        grep -q '#00b8e6' "$M/boot/grub/themes/vaevictis/theme.txt" && ok "live menu theme: wallpaper + cyan entries" || bad "live menu theme has the old colours"
+        grep -q 'set theme=' "$M/boot/grub/grub.cfg" && ok "grub.cfg loads the theme" || bad "grub.cfg does not load the theme"
+        { grep -q 'terminal-width' "$M/boot/grub/themes/vaevictis/theme.txt" && grep -q 'background_image' "$M/boot/grub/grub.cfg"; } \
+            && ok "loading messages on the wallpaper (no black box)" || bad "old theme: black box while loading"
+    else bad "live menu has no theme (plain text menu)"; fi
+else
+    echo "  (squashfs only: skipped)"
+fi
+
+head_ "Files changed in this build (exact size)"
+while read -r path want; do
+    got="$(size_of "$path")"
+    if [ -z "$got" ]; then bad "$path is MISSING"
+    elif [ "$got" = "$want" ]; then ok "$path $got"
+    else bad "$path is $got bytes, expected $want (old version?)"; fi
+done <<'EOF'
+usr/local/bin/vaevictis_install.sh 37728
+usr/local/sbin/vv-nvidia 11163
+usr/local/libexec/vv-vpn-helper 11629
+usr/local/bin/vv-welcome 19406
+usr/local/sbin/vv-grub-theme 3183
+EOF
+
+head_ "Must exist"
+for f in usr/share/backgrounds/vaevictis.png usr/share/applications/vv-vpn.desktop usr/bin/ffmpegthumbnailer \
+         usr/lib/systemd/system-generators/systemd-cryptsetup-generator etc/nftables.conf; do
+    exists "$f" && ok "$f" || bad "$f is missing"
+done
+
+head_ "Contents"
+nft_conf="$(cat_of etc/nftables.conf)"
+[ "$(printf '%s\n' "$nft_conf" | grep -c 'policy drop')" = 2 ] && [ "$(printf '%s\n' "$nft_conf" | grep -c 'policy accept')" = 1 ] \
+    && ok "firewall: input drop, forward drop, output accept" || bad "firewall policies are not drop/drop/accept"
+printf '%s\n' "$nft_conf" | grep -q vpn_ports && bad "old outbound port list (vpn_ports) still in the firewall" || ok "no old outbound port list"
+cat_of usr/local/libexec/vv-vpn-helper | grep -q drop_ipv6_from_conf && ok "vv-vpn-helper strips IPv6 from configs" || bad "vv-vpn-helper is the old version"
+cat_of usr/local/bin/vaevictis_install.sh | grep -q 'systemd-cryptsetup' && ok "installer checks systemd-cryptsetup" || bad "installer has no systemd-cryptsetup guard"
+cat_of usr/local/bin/vaevictis_install.sh | grep -q 'EFI_BEFORE' && ok "installer saves the firmware boot list" || bad "installer lacks the firmware boot list check"
+cat_of usr/local/sbin/vv-grub-theme | grep -q 'backgrounds/vaevictis.png' && ok "GRUB theme uses the VaeVictis wallpaper" || bad "GRUB theme is the old version"
+cat_of usr/libexec/systemd-sysctl-helper > "$W/hids-bin" || true      # a file, not a pipe: grep -q would break the pipe (pipefail)
+grep -aq 'NEW SETUID FILE' "$W/hids-bin" && ok "HIDS daemon is the 2.1 build" || bad "HIDS daemon is missing or the old version (run vv-hids)"
+exists usr/local/bin/hids-notify && exists etc/xdg/autostart/hids-notify.desktop && ok "HIDS popups (hids-notify + autostart)" || bad "hids-notify is missing (run vv-hids)"
+grep -aq 'runuser' "$W/hids-bin" && bad "HIDS daemon still switches user to show popups (old build)" || ok "HIDS daemon does not switch user"
+cat_of etc/systemd/system/sysctl-helper.service | grep -q 'ExecStopPost' && ok "HIDS service warns when it is stopped" || bad "HIDS service unit is the old one (run vv-hids)"
+
+head_ "Packages"
+for p in systemd-cryptsetup cryptsetup-initramfs console-setup ffmpegthumbnailer firefox-esr grub-efi-amd64-bin grub-pc-bin os-prober efibootmgr \
+         nftables fail2ban apparmor keepassxc lynis; do
+    pkg_ok "$p" && ok "$p" || bad "$p is not installed"
+done
+
+head_ "Nothing personal inside"
+leak=0
+for pat in 'etc/wireguard/.+\.(conf|orig)$' 'id_(ed25519|rsa|ecdsa)' '\.kdbx$' '\.ovpn$' 'baseline\.json$' '/\.bash_history' '/\.ssh/' \
+           'etc/ssh/ssh_host_.*_key$' '/\.mozilla|/\.config/mozilla|/\.config/BraveSoftware' 'passwords?.*\.csv$'; do
+    hits="$(awk '{ print $NF }' "$W/list" | grep -E "$pat" | head -5 || true)"
+    if [ -n "$hits" ]; then bad "found files matching $pat:"; printf '          %s\n' $hits; leak=1; fi
+done
+[ "$leak" = 0 ] && ok "no keys, VPN configs, histories, password files or browser profiles"
+mid="$(size_of etc/machine-id)"
+[ "${mid:-1}" = 0 ] && ok "machine-id is empty (new one at every boot)" || bad "machine-id is not empty (${mid:-missing})"
+echo "  home/ in the image:"
+awk '{ print $NF }' "$W/list" | sed -n 's|^squashfs-root/home/\([^/]*\)$|    \1|p' | sort -u | sed 's/^$/    (empty)/'
+[ "$(awk '{ print $NF }' "$W/list" | grep -cE '^squashfs-root/home/[^/]+$')" = 0 ] && echo "    (no user home)"
+
+head_ "Result"
+SUM="$(sha256sum "$ISO" | cut -d' ' -f1)"
+echo "  SHA-256  $SUM"
+echo "  size     $(du -h "$ISO" | cut -f1)"
+if [ "$FAILS" = 0 ]; then echo "  ALL CHECKS PASSED"; else echo "  $FAILS CHECK(S) FAILED: do not publish this image"; exit 1; fi

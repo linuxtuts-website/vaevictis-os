@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""
+patch-linpaint - fix the "DRAG TO SELECT AREA" banner of LinPaint+ (v2.3)
+
+  * the banner is now a slim bar glued to the bottom edge of the screen, so it no longer
+    overlaps the "screenshot taken" popup of GNOME
+  * it disappears as soon as you start dragging, so it never covers the selection
+
+Usage:  patch-linpaint [path/to/linpaint.py]        (default: ./linpaint.py)
+A backup is written next to the file (linpaint.py.bak). Running it twice is harmless.
+Nothing is changed if the expected code is not found.
+"""
+import os
+import py_compile
+import shutil
+import sys
+import tempfile
+
+OLD_BANNER = '''        by = sh - 140
+        cv.create_rectangle(sw // 2 - 380, by - 50, sw // 2 + 380, by + 50,
+                            fill=PROTON_DARK_BG, outline=PROTON_PRIMARY, width=2)
+        cv.create_text(sw // 2, by - 14, text="DRAG TO SELECT AREA  \u2022  ESC to cancel",
+                       fill="white", font=("Helvetica", 20, "bold"))
+        cv.create_text(sw // 2, by + 22, text="Selection will be loaded into the editor",
+                       fill=PROTON_TEXT_MUTED, font=("Helvetica", 12))
+'''
+
+NEW_BANNER = '''        # Hint bar: slim, glued to the bottom edge (away from the GNOME "screenshot taken" popup),
+        # and removed as soon as the drag starts.
+        bw, bh = 520, 58
+        by = sh - 24 - bh // 2
+        cv.create_rectangle(sw // 2 - bw // 2, by - bh // 2, sw // 2 + bw // 2, by + bh // 2,
+                            fill=PROTON_DARK_BG, outline=PROTON_PRIMARY, width=2, tags="banner")
+        cv.create_text(sw // 2, by - 9, text="DRAG TO SELECT AREA  \u2022  ESC to cancel",
+                       fill="white", font=("Helvetica", 14, "bold"), tags="banner")
+        cv.create_text(sw // 2, by + 14, text="Selection will be loaded into the editor",
+                       fill=PROTON_TEXT_MUTED, font=("Helvetica", 10), tags="banner")
+'''
+
+OLD_PRESS = '''        def press(e):
+            st["p0"] = clamp(e)
+'''
+
+NEW_PRESS = '''        def press(e):
+            cv.delete("banner")
+            st["p0"] = clamp(e)
+'''
+
+
+def main():
+    path = sys.argv[1] if len(sys.argv) > 1 else "linpaint.py"
+    if not os.path.isfile(path):
+        sys.exit(f"File not found: {path}")
+    with open(path, encoding="utf-8") as fh:
+        src = fh.read()
+
+    if 'tags="banner"' in src:
+        print("Already patched, nothing to do.")
+        return
+    for name, old in (("banner", OLD_BANNER), ("press handler", OLD_PRESS)):
+        if src.count(old) != 1:
+            sys.exit(f"Cannot find the {name} code exactly once: this is not LinPaint+ v2.3, "
+                     "nothing was changed. Send me the file and I will adapt the patch.")
+
+    new = src.replace(OLD_BANNER, NEW_BANNER).replace(OLD_PRESS, NEW_PRESS)
+
+    fd, tmp = tempfile.mkstemp(suffix=".py")
+    os.close(fd)
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(new)
+        py_compile.compile(tmp, doraise=True)          # never install a file that does not compile
+    except py_compile.PyCompileError as e:
+        os.remove(tmp)
+        sys.exit(f"The patched file does not compile, nothing was changed:\n{e}")
+    os.remove(tmp)
+
+    shutil.copy2(path, path + ".bak")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(new)
+    print(f"Patched {path} (backup: {path}.bak)")
+
+
+if __name__ == "__main__":
+    main()

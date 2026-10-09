@@ -1,0 +1,372 @@
+#!/usr/bin/env python3
+"""
+VaeVictis welcome: what this system does for your security.
+Every value on the Security tab is read from the RUNNING system, nothing is hard-coded.
+It opens by itself ONCE per user (the first login after the installation) and never again; run with --force to open it again.
+"""
+import os
+import platform
+import re
+import subprocess
+import sys
+
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, GLib
+
+FLAG = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+                    "vaevictis", "welcome-seen")
+SSHD_DROPIN = "/etc/ssh/sshd_config.d/10-vaevictis.conf"
+HARDEN_FLAGS = ["slab_nomerge", "init_on_alloc=1", "init_on_free=1", "page_alloc.shuffle=1",
+                "randomize_kstack_offset=on", "vsyscall=none", "debugfs=off", "tsx=off"]
+
+CSS = b"""
+window.vvw { background-color: #0b0b0e; color: #e2e2e5; font-family: system-ui, sans-serif; }
+.vvw label.brand { color: #35f0a1; font-size: 11px; font-weight: bold; letter-spacing: 3px; }
+.vvw label.title { font-size: 20px; font-weight: bold; }
+.vvw label.sub   { color: #707075; font-size: 12px; }
+.vvw label.name  { font-weight: bold; }
+.vvw label.val   { font-family: monospace; font-size: 12px; }
+.vvw label.dim   { color: #a0a0a5; font-size: 12px; }
+.vvw label.code  { font-family: monospace; font-size: 12px; color: #35f0a1; background: #15151a; padding: 6px 10px; border-radius: 6px; }
+.vvw label.h     { color: #8b7cff; font-weight: bold; font-size: 12px; letter-spacing: 1px; }
+.vvw label.tag   { color: #707075; font-style: italic; }
+.vvw label.ok    { color: #35f0a1; }
+.vvw label.warn  { color: #ffb347; }
+.vvw label.info  { color: #707075; }
+.vvw separator   { background: #1c1c22; min-height: 1px; }
+.vvw notebook, .vvw notebook > stack { background: #0b0b0e; }
+.vvw notebook > header { background: #0b0b0e; border: none; }
+.vvw notebook > header > tabs > tab { background: transparent; color: #a0a0a5; border: none; padding: 6px 16px; font-weight: bold; }
+.vvw notebook > header > tabs > tab:checked { color: #35f0a1; box-shadow: inset 0 -2px #35f0a1; }
+.vvw scrolledwindow { background: #0b0b0e; }
+.vvw checkbutton label { color: #a0a0a5; }
+.vvw button { background: #15151a; color: #e2e2e5; border: 1px solid #2a2a32; border-radius: 8px;
+              padding: 7px 16px; font-weight: bold; box-shadow: none; background-image: none; }
+.vvw button:hover { border-color: #35f0a1; }
+.vvw button.link { background: none; border: none; color: #35f0a1; padding: 0 6px; font-weight: normal; }
+.vvw button.link:hover { color: #6bf5bb; }
+.vvw *:link, .vvw *:visited, .vvw button.link label { color: #35f0a1; }
+.vvw button.primary { background: #35f0a1; color: #0b0b0e; border: none; padding: 9px 22px; }
+.vvw button.primary:hover { background: #6bf5bb; }
+"""
+
+
+# ---------------------------------------------------------------- reading the running system
+def rd(path, default=None):
+    try:
+        with open(path) as fh:
+            return fh.read().strip()
+    except OSError:
+        return default
+
+
+def sysctl(key):
+    return rd("/proc/sys/" + key.replace(".", "/"))
+
+
+def run(*cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=3).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def ssh_port():
+    m = re.search(r"^\s*Port\s+(\d+)", rd(SSHD_DROPIN, "") or "", re.M)
+    return m.group(1) if m else "?"
+
+
+def gdm_autologin():
+    """Active automatic or timed login settings of GDM (a line starting with # does not count)."""
+    on = set()
+    for f in ("/etc/gdm3/daemon.conf", "/etc/gdm3/custom.conf"):
+        for ln in (rd(f, "") or "").splitlines():
+            m = re.match(r"^\s*(AutomaticLoginEnable|TimedLoginEnable)\s*=\s*(true|1|yes)\s*$", ln, re.I)
+            if m:
+                on.add(m.group(1))
+    return sorted(on)
+
+
+def ephemeral_low():
+    """First port of the range the kernel hands out to programs that just want to talk to a server."""
+    try:
+        return int((rd("/proc/sys/net/ipv4/ip_local_port_range", "") or "32768 60999").split()[0])
+    except ValueError:
+        return 32768
+
+
+def listening():
+    """(ports that something really offers to the network, number of temporary UDP sockets).
+    Browsers open UDP sockets in the ephemeral range (QUIC, WebRTC): they only talk, they do not accept connections."""
+    seen, temp, low = [], set(), ephemeral_low()
+    for ln in run("ss", "-H", "-tuln").splitlines():
+        p = ln.split()
+        if len(p) < 5:
+            continue
+        proto, state, local = p[0], p[1], p[4]
+        if proto == "tcp" and state != "LISTEN":
+            continue
+        host, _, port = local.rpartition(":")
+        if host.strip("[]").startswith("127.") or host.strip("[]") == "::1":
+            continue
+        if proto == "udp" and port.isdigit() and int(port) >= low:
+            temp.add(port)
+            continue
+        item = f"{proto}/{port}"
+        if item not in seen:
+            seen.append(item)
+    return seen, len(temp)
+
+
+def checks():
+    """[(name, value, status, explanation)]  status: ok | warn | info"""
+    c = []
+    toks = set((rd("/proc/cmdline", "") or "").split())
+
+    swaps = [ln for ln in (rd("/proc/swaps", "") or "").splitlines()[1:] if ln.strip()]
+    c.append(("Swap", "off" if not swaps else f"ON ({len(swaps)})", "ok" if not swaps else "warn",
+              "No swap: RAM contents are never written to disk. The live system only uses swap if asked to (swap=true)."))
+
+    v6 = os.path.exists("/proc/sys/net/ipv6")
+    c.append(("IPv6", "enabled" if v6 else "disabled", "info" if v6 else "ok",
+              "Boot option ipv6.disable=1 removes the IPv6 stack: smaller network attack surface. "
+              "The 'compatibility' boot entry keeps it on."))
+
+    present = [f for f in HARDEN_FLAGS if f in toks]
+    c.append(("Hardened boot options", f"{len(present)}/{len(HARDEN_FLAGS)}",
+              "ok" if len(present) == len(HARDEN_FLAGS) else "info",
+              "Memory is wiped on allocation and free, allocator caches are not merged or predictable, "
+              "legacy vsyscall, debugfs and TSX are off."))
+
+    for name, key, good, text in (
+        ("Kernel pointers hidden", "kernel.kptr_restrict", {"2"}, "Kernel addresses are hidden from every user (kptr_restrict=2)."),
+        ("dmesg restricted", "kernel.dmesg_restrict", {"1"}, "Only root can read the kernel log (dmesg_restrict=1)."),
+        ("Unprivileged BPF", "kernel.unprivileged_bpf_disabled", {"1", "2"}, "Normal users cannot load BPF programs into the kernel."),
+        ("ptrace limited", "kernel.yama.ptrace_scope", {"1", "2", "3"}, "A process cannot read the memory of another one it did not start (Yama)."),
+    ):
+        val = sysctl(key)
+        c.append((name, val if val is not None else "n/a", "ok" if val in good else "warn", text))
+
+    cp = sysctl("kernel.core_pattern") or ""
+    c.append(("Core dumps", "off" if cp.startswith("|/bin/false") else "on", "ok" if cp.startswith("|/bin/false") else "warn",
+              "Crashing programs leave no memory dump on disk."))
+
+    aa = rd("/sys/module/apparmor/parameters/enabled")
+    c.append(("AppArmor", "enabled" if aa == "Y" else "off", "ok" if aa == "Y" else "warn",
+              "Mandatory access control confines programs that ship an AppArmor profile."))
+
+    lock = rd("/sys/kernel/security/lockdown", "") or ""
+    m = re.search(r"\[(\w+)\]", lock)
+    c.append(("Kernel lockdown", m.group(1) if m else "n/a", "info",
+              "Not forced on purpose: it would block proprietary drivers such as NVIDIA's."))
+
+    port = ssh_port()
+    for unit, label, text in (
+        ("nftables", "Firewall (nftables)", "Default-deny in and out. See the Network tab."),
+        ("ssh", "SSH server", f"Port {port}, keys only, no root, only members of group 'sshusers' (nobody yet)."),
+        ("fail2ban", "fail2ban", "Bans an address for 1 hour after 3 failed SSH logins in 10 minutes."),
+    ):
+        st = run("systemctl", "is-active", unit) or "unknown"
+        if unit == "ssh" and st != "active" and (run("systemctl", "is-enabled", unit) or "") in ("disabled", "masked"):
+            c.append((label, "off", "ok", "Switched off: nothing listens for SSH. To use it, see the Network tab."))
+            continue
+        c.append((label, st, "ok" if st == "active" else "warn", text))
+
+    hids = run("systemctl", "is-active", "sysctl-helper") or "unknown"
+    c.append(("HIDS", hids, "ok" if hids == "active" else "warn",
+              "File integrity monitor: it checks the system programs (bin, sbin, usr/bin, usr/local/bin) and "
+              "/etc/passwd, shadow and sudoers against a recorded baseline, then watches them live. Changes go to "
+              "/var/log/hids.log and a notification; package updates are recognised and not flagged."))
+
+    vdir = "/sys/devices/system/cpu/vulnerabilities"
+    try:
+        states = {n: (rd(os.path.join(vdir, n), "") or "") for n in os.listdir(vdir)}
+    except OSError:
+        states = {}
+    if states:
+        bad = sorted(n for n, v in states.items() if v.startswith("Vulnerable"))
+        c.append(("CPU vulnerabilities", "none open" if not bad else f"{len(bad)} open", "ok" if not bad else "warn",
+                  f"Kernel mitigations checked for {len(states)} known CPU flaws." + (f" Open: {', '.join(bad)}." if bad else "")))
+    mc = rd("/sys/devices/system/cpu/cpu0/microcode/version")
+    if mc:
+        c.append(("CPU microcode", mc, "info", "Revision loaded at boot; intel-microcode and amd64-microcode keep it current."))
+
+    live = "boot=live" in toks
+    al = gdm_autologin()
+    if live:
+        c.append(("Automatic login", "live session", "info",
+                  "The live session logs in by itself, by design. An installed system never does."))
+    elif al:
+        c.append(("Automatic login", "ON", "warn",
+                  "The login screen lets someone in WITHOUT a password (" + ", ".join(al) + "). Put a # before those lines in "
+                  "/etc/gdm3/daemon.conf and /etc/gdm3/custom.conf and restart."))
+    else:
+        c.append(("Automatic login", "off", "ok", "Nobody gets in without typing a password."))
+
+    ports, temp = listening()
+    expected = {f"tcp/{port}", "udp/68"}
+    extra = [p for p in ports if p not in expected]
+    shown = ", ".join(ports) if ports else "none"
+    if temp:
+        shown += f" (+{temp} temporary UDP)"
+    c.append(("Listening ports", shown, "ok" if not extra else "warn",
+              "Everything reachable from the network, read from the kernel right now. Temporary UDP sockets above "
+              "port 32768 are programs such as browsers talking to servers: they accept no connections and are not counted."))
+
+    c.append(("Kernel", platform.release(), "info", "Debian's own kernel with security updates (apt)."))
+    return c
+
+
+# ---------------------------------------------------------------- UI helpers
+def lab(text, cls, wrap=False, selectable=False):
+    w = Gtk.Label(label=text)
+    w.set_xalign(0)
+    w.get_style_context().add_class(cls)
+    if wrap:
+        w.set_line_wrap(True)
+        w.set_max_width_chars(70)
+    w.set_selectable(selectable)
+    return w
+
+
+def page():
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+    box.set_border_width(14)
+    sw = Gtk.ScrolledWindow()
+    sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    sw.add(box)
+    return sw, box
+
+
+class Welcome(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="VaeVictis OS Hardened")
+        self.get_style_context().add_class("vvw")
+        self.set_icon_name("vv-welcome")
+        self.set_default_size(680, 600)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_border_width(20)
+
+        prov = Gtk.CssProvider()
+        prov.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_screen(
+            self.get_screen(), prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.add(root)
+        root.pack_start(lab("VAEVICTIS OS", "brand"), False, False, 0)
+        root.pack_start(lab("Hardened live environment", "title"), False, False, 0)
+        root.pack_start(lab(f"Kernel {platform.release()}  \u00b7  Debian 13  \u00b7  Stateless. Stealth. Brutal.", "sub"), False, False, 0)
+
+        self.nb = Gtk.Notebook()
+        root.pack_start(self.nb, True, True, 6)
+
+        self.sec_scroll, self.sec_box = page()
+        self.nb.append_page(self.sec_scroll, Gtk.Label(label="SECURITY"))
+        self.nb.append_page(self._network_page(), Gtk.Label(label="NETWORK"))
+        self.nb.append_page(self._apps_page(), Gtk.Label(label="APPS"))
+        self._fill_security()
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        site = Gtk.LinkButton.new_with_label("https://linuxtuts.online", "linuxtuts.online")
+        site.set_relief(Gtk.ReliefStyle.NONE)
+        row.pack_start(site, False, False, 0)
+        refresh = Gtk.Button(label="REFRESH")
+        refresh.connect("clicked", lambda *_: self._fill_security())
+        row.pack_end(refresh, False, False, 0)
+        ok = Gtk.Button(label="GOT IT")
+        ok.get_style_context().add_class("primary")
+        ok.connect("clicked", self.on_close)
+        row.pack_end(ok, False, False, 0)
+        root.pack_start(row, False, False, 4)
+
+    # ---- tabs
+    def _fill_security(self):
+        for ch in self.sec_box.get_children():
+            self.sec_box.remove(ch)
+        self.sec_box.pack_start(lab("LIVE STATUS, READ FROM THIS RUNNING SYSTEM", "h"), False, False, 0)
+        for name, value, status, text in checks():
+            head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            head.pack_start(lab("\u25cf", status), False, False, 0)
+            head.pack_start(lab(name, "name"), False, False, 0)
+            v = lab(value, "val")
+            v.set_xalign(1)
+            v.set_ellipsize(3)
+            head.pack_end(v, True, True, 0)
+            self.sec_box.pack_start(head, False, False, 0)
+            self.sec_box.pack_start(lab(text, "dim", wrap=True), False, False, 0)
+        self.sec_box.show_all()
+
+    def _network_page(self):
+        sw, box = page()
+        port = ssh_port()
+        box.pack_start(lab("FIREWALL (nftables)", "h"), False, False, 0)
+        box.pack_start(lab(
+            f"Incoming: everything is dropped except DHCP replies, the ICMP messages "
+            f"that IPv4 needs to work, and SSH (port {port}) if you switch it on. Outgoing traffic is not blocked, so every program can reach any port or server. "
+            "Dropped incoming packets are logged, at most 3 lines a minute.", "dim", wrap=True), False, False, 0)
+        box.pack_start(lab("sudo nft list ruleset\nsudo journalctl -k | grep vv-drop", "code", selectable=True), False, False, 0)
+        box.pack_start(lab("SSH", "h"), False, False, 6)
+        box.pack_start(lab(
+            f"Switched off by default: nothing listens on the network. When you want it, it is hardened already: port {port}, "
+            "public-key login only (no passwords, no root), only members of the group 'sshusers'. Authorize yourself, then start it:", "dim", wrap=True), False, False, 0)
+        box.pack_start(lab("sudo usermod -aG sshusers $USER\nmkdir -p ~/.ssh && nano ~/.ssh/authorized_keys\nsudo systemctl enable --now ssh        # and to turn it off again: sudo systemctl disable --now ssh", "code", selectable=True), False, False, 0)
+        box.pack_start(lab("FAIL2BAN", "h"), False, False, 6)
+        box.pack_start(lab(
+            "Watches the SSH log. Three failed logins within 10 minutes ban the address for one hour, using an nftables set.", "dim", wrap=True), False, False, 0)
+        box.pack_start(lab("sudo fail2ban-client status sshd", "code", selectable=True), False, False, 0)
+        box.pack_start(lab("VPN", "h"), False, False, 6)
+        box.pack_start(lab(
+            "WireGuard on the allowed UDP port (51820 by default). The VPN does not block traffic that stays outside the tunnel: "
+            "there is no kill switch yet.", "dim", wrap=True), False, False, 0)
+        return sw
+
+    def _apps_page(self):
+        sw, box = page()
+        for name, text in (
+            ("VPN", "WireGuard manager. IMPORT your provider's .conf file, then CONNECT. Privileged actions go through a small "
+                    "checked helper (polkit), never through the app itself."),
+            ("Aurora", "Offline, privacy-focused audio player. No network access."),
+            ("Linpaint", "Dark MS-Paint-style editor: pencil, brush, spray, eraser, fill, picker, text and shapes. "
+                         "Takes screenshots (full screen or area, with a delay) and opens them for editing."),
+            ("PDF Tool", "View and edit PDFs locally (Ctrl+T to insert text). Nothing is uploaded anywhere."),
+            ("Snap", "Incremental snapshots with hardlinks (rsync) for ext4, xfs and btrfs: system snapshot (without /home), "
+                     "folder backup, list, delete and restore. Run 'sudo v-snap'. Installed systems only. "
+                     "It lives on the same disk: it protects from a bad update, not from a dead disk."),
+            ("HIDS", "File integrity dashboard: the last 100 log lines, refreshed every 3 seconds. A change you made yourself "
+                     "(for example a new password) shows up as an alert; 'Authorize Changes & Seal System' accepts the "
+                     "current state as the new reference. Use it ONLY for your own changes, sealing an intrusion would hide it."),
+            ("Panic", "Cuts the network, flushes the disks and powers off at once (needs no password, asks nothing twice). "
+                      "It is not a secure erase: RAM fades after power-off, it is not wiped."),
+            ("KeePassXC", "Offline password manager. Your database is a single encrypted file; nothing is synced anywhere."),
+            ("mat2", "Strips metadata (author, GPS, camera, software) from files. Terminal: mat2 photo.jpg"),
+            ("Lynis", "Security auditor: sudo lynis audit system. It scores this system and lists what could be tighter."),
+            ("debsums", "Checks installed files against their package checksums: sudo debsums -c lists the files that changed."),
+            ("VM tools", "spice-vdagent and qemu-guest-agent give clipboard and screen resizing inside a virtual machine. "
+                         "They do nothing on real hardware."),
+        ):
+            box.pack_start(lab(name, "name"), False, False, 0)
+            box.pack_start(lab(text, "dim", wrap=True), False, False, 4)
+        return sw
+
+    def on_close(self, _btn):
+        self.destroy()
+
+
+if __name__ == "__main__":
+    if "--force" not in sys.argv:
+        if os.path.exists(FLAG):
+            sys.exit(0)
+        try:                                   # first start: remember it now, so it never opens by itself again
+            os.makedirs(os.path.dirname(FLAG), exist_ok=True)
+            open(FLAG, "w").close()
+        except OSError:
+            pass
+    GLib.set_prgname("vv-welcome")            # must match vv-welcome.desktop: gives the window its icon
+    GLib.set_application_name("VaeVictis Welcome")
+    Gtk.Window.set_default_icon_name("vv-welcome")
+    win = Welcome()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()

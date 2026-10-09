@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+# vv-nvidia - OPTIONAL: replace the open driver (nouveau) with NVIDIA's own proprietary driver.
+#
+#   vv-nvidia            show the graphics cards, the driver in use and what is installed (changes nothing)
+#   vv-nvidia install    install the proprietary driver (shows the plan, asks for YES)
+#   vv-nvidia undo       remove it and go back to nouveau
+#
+# Why optional: the NVIDIA driver is closed source. VaeVictis ships the open driver (nouveau) so the default system has
+# no proprietary code in it. On recent cards nouveau is often slow in games and heavy applications: this script is for
+# people who accept that trade for speed. It touches only what is listed below, and "undo" puts everything back.
+#
+#   - adds ONE apt source file (non-free) : /etc/apt/sources.list.d/vaevictis-nvidia.sources
+#   - installs the Debian packages nvidia-driver, nvidia-smi, nvidia-settings, nvidia-suspend-common, firmware-misc-nonfree
+#     and the kernel headers (nvidia-suspend-common is REQUIRED: without it GDM turns Wayland off and the login screen crashes)
+#   - rebuilds the initramfs (and checks it can still unlock an encrypted disk)
+#
+# Needs: the INSTALLED system (not the live session), network, Secure Boot OFF (VaeVictis does not sign its modules).
+set -euo pipefail
+
+APT_DIR="${VV_APT_DIR:-/etc/apt}"
+SRCFILE="$APT_DIR/sources.list.d/vaevictis-nvidia.sources"
+MODCONF="${VV_MODPROBE_DIR:-/etc/modprobe.d}/vv-nvidia.conf"
+KEYRING=/usr/share/keyrings/debian-archive-keyring.gpg
+PKGS=(linux-headers-amd64 nvidia-driver nvidia-smi nvidia-settings nvidia-suspend-common firmware-misc-nonfree)
+
+die()  { echo "vv-nvidia: $*" >&2; exit 1; }
+warn() { echo "vv-nvidia: WARNING: $*" >&2; }
+need_root() { [ "$(id -u)" -eq 0 ] || exec sudo -E "$0" "$@"; }
+
+gpus()      { lspci -nn 2>/dev/null | grep -iE 'VGA|3D controller|Display controller' || true; }
+nvidia_gpu(){ gpus | grep -qi '\[10de:'; }
+codename()  { ( . /etc/os-release; echo "${VERSION_CODENAME:-trixie}" ); }
+
+secure_boot_on() {
+    local f
+    for f in /sys/firmware/efi/efivars/SecureBoot-*; do
+        [ -r "$f" ] || continue
+        [ "$(od -An -t u1 -j4 -N1 "$f" 2>/dev/null | tr -d ' ')" = 1 ] && return 0
+    done
+    return 1
+}
+
+# The mirror already in use for the normal system (not our own file, not the security one).
+mirror() {
+    local m=""
+    m=$(cat "$APT_DIR"/sources.list.d/*.sources 2>/dev/null | awk '/^URIs:/{print $2}' | grep -v -e security | head -1 || true)
+    [ -n "$m" ] || m=$(awk '/^deb[[:space:]]/{for(i=2;i<=NF;i++) if ($i ~ /^https?:/) {print $i; exit}}' "$APT_DIR/sources.list" 2>/dev/null | grep -v security | head -1 || true)
+    [ -n "$m" ] || m=http://deb.debian.org/debian
+    echo "${m%/}"
+}
+
+# Is the "non-free" component already enabled in the apt sources of the system (not counting our own file)?
+# Adding it a second time only makes apt print a long list of "configured multiple times" warnings.
+nonfree_enabled() {
+    local f
+    for f in "$APT_DIR/sources.list" "$APT_DIR"/sources.list.d/*.list "$APT_DIR"/sources.list.d/*.sources; do
+        [ -f "$f" ] || continue
+        [ "$f" = "$SRCFILE" ] && continue
+        grep -vE '^[[:space:]]*#' "$f" | grep -qE '(^|[[:space:]])non-free([[:space:]]|$)' && return 0
+    done
+    return 1
+}
+
+write_sources() {
+    local cn m; cn="$(codename)"; m="$(mirror)"
+    install -d -m 0755 "$(dirname "$SRCFILE")"
+    cat > "$SRCFILE" <<EOF
+# Written by vv-nvidia. Only the non-free part, needed for the NVIDIA driver. "vv-nvidia undo" deletes this file.
+Types: deb
+URIs: $m
+Suites: $cn $cn-updates
+Components: non-free
+Signed-By: $KEYRING
+
+Types: deb
+URIs: http://security.debian.org/debian-security
+Suites: $cn-security
+Components: non-free
+Signed-By: $KEYRING
+EOF
+    chmod 0644 "$SRCFILE"
+}
+
+nvidia_pkgs_installed() {   # names of installed NVIDIA packages (not the firmware package, which stays)
+    dpkg-query -W -f='${binary:Package} ${db:Status-Abbrev}\n' 2>/dev/null \
+        | awk '$2=="ii" && $1 ~ /^(nvidia-|libnvidia-|xserver-xorg-video-nvidia|libgl1-nvidia|libegl-nvidia|libgles-nvidia|libglx-nvidia|glx-alternative-nvidia)/ {print $1}' \
+        | grep -v '^nvidia-firmware' || true
+}
+
+rebuild_initramfs() {
+    update-initramfs -u -k all
+    # An encrypted root must still be unlockable by every initramfs, or the next start ends in a dead end.
+    if findmnt -no SOURCE / 2>/dev/null | grep -q '^/dev/mapper/'; then
+        local img listing bad=0
+        listing=$(mktemp)
+        for img in /boot/initrd.img-*; do
+            [ -f "$img" ] || continue
+            case "$img" in *.dpkg-*|*.bak) continue ;; esac
+            lsinitramfs "$img" > "$listing" 2>/dev/null || true
+            if ! { grep -q 'sbin/cryptsetup' "$listing" && grep -q 'cryptroot/crypttab' "$listing"; }; then
+                echo "  $(basename "$img"): CANNOT unlock the encrypted disk" >&2; bad=1
+            fi
+        done
+        rm -f "$listing"
+        [ "$bad" -eq 0 ] || die "an initramfs cannot unlock the encrypted disk: DO NOT REBOOT. Run: update-initramfs -u -k all"
+        echo "Initramfs check: every image can unlock the encrypted disk."
+    fi
+}
+
+cmd_status() {
+    echo "== graphics cards"; gpus | sed 's/^/  /'
+    echo "== driver in use"
+    lspci -nnk 2>/dev/null | grep -EA3 'VGA|3D controller|Display controller' | grep -E 'VGA|3D|Display|Kernel driver in use' | sed 's/^/  /' || true
+    echo "== NVIDIA packages installed"
+    local p; p="$(nvidia_pkgs_installed)"
+    if [ -n "$p" ]; then echo "$p" | sed 's/^/  /'; else echo "  none (the open driver nouveau is the one in use)"; fi
+    echo "== other"
+    if secure_boot_on; then echo "  Secure Boot: ON  -> the proprietary driver would NOT load; switch it off in the firmware first"
+    else echo "  Secure Boot: off (good for this driver)"; fi
+    if grep -qw 'boot=live' /proc/cmdline; then echo "  Session: LIVE (install the system first: a live session is erased at shutdown)"; fi
+    if [ -f "$SRCFILE" ]; then echo "  Apt source: $SRCFILE present"
+    elif nonfree_enabled; then echo "  Apt source: non-free is already enabled in your apt sources"
+    else echo "  Apt source: not added yet"; fi
+    if nvidia_gpu; then echo; echo "To install the proprietary driver: sudo vv-nvidia install"
+    else echo; echo "No NVIDIA card found: there is nothing to do."; fi
+}
+
+cmd_install() {
+    need_root install
+    grep -qw 'boot=live' /proc/cmdline && die "this is the live session: it is erased at shutdown. Install VaeVictis first, then run this."
+    nvidia_gpu || die "no NVIDIA card found."
+    [ -r "$KEYRING" ] || die "$KEYRING is missing (package debian-archive-keyring)."
+    if secure_boot_on; then die "Secure Boot is ON: the module would not load and the screen could stay black. Switch it off in the firmware, then try again."; fi
+    echo "This will:"
+    if nonfree_enabled; then echo "  1. apt source           nothing to add: non-free is already enabled"
+    else echo "  1. add the apt source   $SRCFILE   (non-free, Debian's own, signed)"; fi
+    echo "  2. install              ${PKGS[*]}"
+    echo "  3. build the NVIDIA kernel module (DKMS) and rebuild the initramfs"
+    echo "  4. switch the graphics from nouveau to NVIDIA at the next restart"
+    echo "Closed-source code enters the system. Undo at any time with:  sudo vv-nvidia undo"
+    echo "The Intel/AMD graphics of the motherboard stay as a fallback: if the screen stays black, plug the cable into the motherboard output."
+    read -rp "Type YES to proceed: " ans
+    [ "$ans" = "YES" ] || die "aborted, nothing changed."
+
+    if nonfree_enabled; then
+        echo "== apt source: non-free is already enabled in your apt sources, nothing to add"
+    else
+        write_sources
+    fi
+    echo "== apt update"
+    apt-get update
+    echo "== installing"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${PKGS[@]}"
+
+    echo "== module (DKMS)"
+    if dkms status 2>/dev/null | grep -i nvidia | grep -qi installed; then
+        dkms status | grep -i nvidia | sed 's/^/  /'
+    else
+        warn "DKMS did not report an installed NVIDIA module: check 'dkms status' and the headers of the installed kernels before restarting."
+    fi
+
+    # Make sure nouveau steps aside and the display driver uses modesetting (needed by GNOME on Wayland).
+    local mdir; mdir="$(dirname "$MODCONF")"
+    install -d -m 0755 "$mdir"
+    : > "$MODCONF.tmp"
+    if ! grep -rqsE '^[[:space:]]*blacklist[[:space:]]+nouveau' "$mdir" /usr/lib/modprobe.d /lib/modprobe.d 2>/dev/null; then
+        echo "blacklist nouveau" >> "$MODCONF.tmp"
+    fi
+    if ! grep -rqsE 'nvidia-drm[[:space:]]+modeset=1' "$mdir" /usr/lib/modprobe.d /lib/modprobe.d 2>/dev/null; then
+        echo "options nvidia-drm modeset=1" >> "$MODCONF.tmp"
+    fi
+    if ! grep -rqsE 'NVreg_PreserveVideoMemoryAllocations=1' "$mdir" /usr/lib/modprobe.d /lib/modprobe.d 2>/dev/null; then
+        echo "options nvidia NVreg_PreserveVideoMemoryAllocations=1" >> "$MODCONF.tmp"
+    fi
+    if [ -s "$MODCONF.tmp" ]; then
+        { echo "# Written by vv-nvidia. 'vv-nvidia undo' deletes this file."; cat "$MODCONF.tmp"; } > "$MODCONF"
+        chmod 0644 "$MODCONF"; echo "  $MODCONF"
+    fi
+    rm -f "$MODCONF.tmp"
+
+    echo "== suspend/resume services (GDM keeps Wayland only if these exist and are enabled)"
+    systemctl enable nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service \
+        || warn "could not enable the nvidia suspend/resume services"
+    local miss=0 f
+    for f in /usr/bin/nvidia-sleep.sh /usr/lib/systemd/system-sleep/nvidia; do
+        [ -x "$f" ] || { echo "  MISSING: $f" >&2; miss=1; }
+    done
+    for f in nvidia-suspend nvidia-resume nvidia-hibernate; do
+        [ "$(systemctl is-enabled "$f" 2>/dev/null)" = enabled ] || { echo "  NOT ENABLED: $f" >&2; miss=1; }
+    done
+    [ "$miss" -eq 0 ] || die "the login screen (GDM) would turn Wayland off and fail to start: DO NOT RESTART. Run 'vv-nvidia undo' or ask for help."
+    echo "  ok"
+
+    echo "== initramfs"
+    rebuild_initramfs
+
+    echo
+    echo "Done. RESTART now. Then check it with:  nvidia-smi   and   lspci -nnk | grep -A3 VGA"
+    echo "If the system does not start well: choose 'Advanced options' in the GRUB menu and an older kernel, or run  sudo vv-nvidia undo"
+}
+
+cmd_undo() {
+    need_root undo
+    local p; p="$(nvidia_pkgs_installed)"
+    if [ -n "$p" ]; then
+        echo "== removing: $(echo "$p" | tr '\n' ' ')"
+        # shellcheck disable=SC2086
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y $p
+    else
+        echo "No NVIDIA packages installed."
+    fi
+    rm -f "$MODCONF" "$SRCFILE"
+    apt-get update || warn "apt update failed (no network?): the source file is already removed."
+    echo "== initramfs"
+    rebuild_initramfs
+    echo
+    echo "Done. RESTART: the open driver (nouveau) comes back. The kernel headers stay installed (harmless)."
+}
+
+case "${1:-status}" in
+    status|--status|check) cmd_status ;;
+    install)               cmd_install ;;
+    undo|remove)           cmd_undo ;;
+    -h|--help|help)        sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *) die "unknown command: $1  (use: status | install | undo)" ;;
+esac

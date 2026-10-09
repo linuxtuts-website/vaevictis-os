@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# vv-hids - build the HIDS daemon from hids.go INSIDE the chroot, then install it with its dashboard and service
+#
+#   vv-hids
+#
+# Needs next to this script: hids.go, hids-gui, hids-notify, hids.svg
+# Go is installed only for the build and the exact packages it pulled in are purged afterwards,
+# so the ISO does not carry a compiler. The binary is static and built from the published source.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+CH="${VV_CHROOT:-/run/media/user/Mio/Backup_VaeVictis_Completo/vaevictis/new/chroot}"
+CH="$(realpath -m "$CH")"
+VVC="$HERE/vv-chroot"
+die() { echo "vv-hids: $*" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || exec sudo -E VV_CHROOT="$CH" "$0" "$@"
+[ -f "$CH/etc/debian_version" ] && [ "$CH" != "/" ] || die "not a Debian root filesystem: $CH"
+for f in hids.go hids-gui hids-notify hids.svg; do [ -f "$HERE/$f" ] || die "missing next to this script: $f"; done
+[ -x "$VVC" ] || [ -n "${VV_SKIP_CHROOT:-}" ] || die "vv-chroot must be next to this script"
+
+in_chroot() {
+    if [ -n "${VV_SKIP_CHROOT:-}" ]; then echo "  [skipped in test] $1"; return 0; fi
+    "$VVC" run "$@"
+}
+
+echo "== 1/4 build inside the chroot (Go is installed temporarily)"
+install -d -m 0755 "$CH/tmp/hids-build"
+install -m 0644 "$HERE/hids.go" "$CH/tmp/hids-build/hids.go"
+cat > "$CH/tmp/vv-hids-build.sh" <<'CHROOT'
+#!/bin/sh
+set -e
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+dpkg-query -W -f='${Package}\n' | sort > /tmp/vv-pkgs-before
+apt-get install -y --no-install-recommends golang-go
+cd /tmp/hids-build
+GO111MODULE=off CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o hids hids.go
+./hids -version
+cp hids /tmp/hids-binary
+dpkg-query -W -f='${Package}\n' | sort > /tmp/vv-pkgs-after
+ADDED="$(comm -13 /tmp/vv-pkgs-before /tmp/vv-pkgs-after | tr '\n' ' ')"
+OLDGO="$(dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'golang*' 2>/dev/null | awk '$1=="ii"{print $2}' | tr '\n' ' ')"
+printf '%s\n' $ADDED $OLDGO | sort -u > /tmp/vv-topurge
+TOPURGE="$(tr '\n' ' ' < /tmp/vv-topurge)"
+echo "removing the Go toolchain and what the build pulled in: $TOPURGE"
+if [ -n "$TOPURGE" ]; then
+    apt-get -s purge $TOPURGE | awk '/^Remv /{print $2}' | sort -u > /tmp/vv-wouldremove
+    EXTRA="$(comm -13 /tmp/vv-topurge /tmp/vv-wouldremove | tr '\n' ' ')"
+    if [ -n "$EXTRA" ]; then echo "NOT purging: it would also remove other packages: $EXTRA"
+    else apt-get purge -y $TOPURGE; fi
+fi
+rm -rf /tmp/hids-build /tmp/vv-pkgs-before /tmp/vv-pkgs-after /tmp/vv-topurge /tmp/vv-wouldremove
+CHROOT
+chmod 0755 "$CH/tmp/vv-hids-build.sh"
+in_chroot /bin/sh /tmp/vv-hids-build.sh
+rm -f "$CH/tmp/vv-hids-build.sh"
+
+echo "== 2/4 files"
+in_chroot /bin/sh -c 'chattr -i /usr/libexec/systemd-sysctl-helper /var/log/hids_baseline.json 2>/dev/null || true'
+[ -n "${VV_SKIP_CHROOT:-}" ] || install -D -m 0755 "$CH/tmp/hids-binary" "$CH/usr/libexec/systemd-sysctl-helper"
+rm -f "$CH/tmp/hids-binary"
+install -D -m 0755 "$HERE/hids-gui" "$CH/usr/local/bin/hids-gui"
+install -D -m 0755 "$HERE/hids-notify" "$CH/usr/local/bin/hids-notify"
+install -d -m 0755 "$CH/etc/xdg/autostart"
+cat > "$CH/etc/xdg/autostart/hids-notify.desktop" <<'AUTO'
+[Desktop Entry]
+Type=Application
+Name=HIDS notifications
+Comment=Desktop popups for the HIDS alerts (runs in your own session, reads /var/log/hids.log)
+Exec=/usr/local/bin/hids-notify
+Icon=hids
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+AUTO
+install -D -m 0644 "$HERE/hids.svg" "$CH/usr/share/icons/hicolor/scalable/apps/hids.svg"
+cat > "$CH/usr/share/applications/hids-security.desktop" <<'DESK'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=HIDS Security
+Comment=Host intrusion detection: watches the system programs and key account files
+Exec=/usr/local/bin/hids-gui
+Icon=hids
+Terminal=false
+Categories=System;Security;
+StartupWMClass=hids-gui
+DESK
+cat > "$CH/etc/systemd/system/sysctl-helper.service" <<'UNIT'
+[Unit]
+Description=VaeVictis HIDS (file integrity monitor)
+After=local-fs.target live-config.service
+
+[Service]
+ExecStart=/usr/libexec/systemd-sysctl-helper -watch
+ExecStopPost=/usr/libexec/systemd-sysctl-helper -stopped
+Restart=always
+RestartSec=2
+User=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+# the daemon only reads the system and writes the log: popups come from hids-notify, which runs in the user's session
+ProtectSystem=strict
+ReadWritePaths=/var/log /run
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+echo "  /usr/libexec/systemd-sysctl-helper, /usr/local/bin/hids-gui, /usr/local/bin/hids-notify (autostart), icon, launcher, service"
+
+echo "== 3/4 clean state for the ISO"
+# No baseline is shipped: a live session records its own after boot (live-config changes /etc/passwd and sudoers),
+# and an installed system records one at its first start.
+in_chroot /bin/sh -c 'rm -f /var/log/hids_baseline.json; : > /var/log/hids.log; systemctl enable sysctl-helper.service; command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -f -t /usr/share/icons/hicolor || true'
+
+echo "== 4/4 done"
+echo "The old hids_install.sh and Reset_HIDS.sh are obsolete (they referenced services that no longer exist): move them out of the project."
+echo "The service name 'sysctl-helper' is kept so the welcome window keeps working; the dashboard's SEAL button runs: pkexec .../systemd-sysctl-helper -seal (stops the daemon, records, restarts it)"

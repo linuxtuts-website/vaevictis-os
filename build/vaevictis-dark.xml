@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<style-scheme id="vaevictis-dark" name="VaeVictis Dark" version="1.0">
+  <author>VaeVictis</author>
+  <description>Carbon dark with mint and violet accents</description>
+
+  <color name="bg"      value="#0b0b0e"/>
+  <color name="bg2"     value="#15151a"/>
+  <color name="fg"      value="#e2e2e5"/>
+  <color name="dim"     value="#707075"/>
+  <color name="faint"   value="#505055"/>
+  <color name="mint"    value="#35f0a1"/>
+  <color name="violet"  value="#8b7cff"/>
+  <color name="amber"   value="#ffb86c"/>
+  <color name="red"     value="#ff5d5d"/>
+  <color name="sel"     value="#2a2a32"/>
+
+  <style name="text"                  foreground="fg" background="bg"/>
+  <style name="selection"             foreground="#ffffff" background="sel"/>
+  <style name="cursor"                foreground="mint"/>
+  <style name="current-line"          background="bg2"/>
+  <style name="line-numbers"          foreground="faint" background="bg"/>
+  <style name="current-line-number"   foreground="mint" background="bg2" bold="true"/>
+  <style name="bracket-match"         foreground="mint" bold="true"/>
+  <style name="bracket-mismatch"      foreground="red" bold="true"/>
+  <style name="search-match"          foreground="#ffffff" background="#5a4a00"/>
+  <style name="draw-spaces"           foreground="#2a2a32"/>
+  <style name="right-margin"          foreground="#2a2a32"/>
+
+  <style name="def:comment"           foreground="dim" italic="true"/>
+  <style name="def:string"            foreground="amber"/>
+  <style name="def:error"             foreground="red" underline="true"/>
+
+  <style name="xml:tag"                    foreground="mint"/>
+  <style name="xml:element-name"           foreground="mint" bold="true"/>
+  <style name="xml:attribute-name"         foreground="violet"/>
+  <style name="xml:attribute-value"        foreground="amber"/>
+  <style name="xml:namespace"              foreground="violet" italic="true"/>
+  <style name="xml:entity"                 foreground="red"/>
+  <style name="xml:doctype"                foreground="dim"/>
+  <style name="xml:processing-instruction" foreground="dim"/>
+  <style name="xml:cdata-delim"            foreground="dim" bold="true"/>
+  <style name="xml:comment"                foreground="dim" italic="true"/>
+  <style name="xml:error"                  foreground="red" underline="true"/>
+</style-scheme>

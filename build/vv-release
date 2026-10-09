@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# vv-release - turn the newest ISO into a publishable release
+#
+#   vv-release [VERSION] [--iso PATH] [--sign] [--force]
+#
+# 1. refuses to continue if the chroot still holds anything personal (see GATES below)
+# 2. writes release/VERSION/: the ISO, SHA256SUMS (+ signature with --sign), sbom.cdx.json (CycloneDX),
+#    PACKAGES.txt, SOURCES.txt, grub.cfg.txt (the exact boot options) and BUILD-INFO.txt
+#
+# Run it as your normal user (gpg must use YOUR key). It asks for sudo only to read root-only files.
+# Variables: VV_CHROOT, VV_OUT (ISO folder), VV_REL (release folder), VV_REPO_URL (printed in SOURCES.txt)
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+CH="${VV_CHROOT:-/run/media/user/Mio/Backup_VaeVictis_Completo/vaevictis/new/chroot}"
+CH="$(realpath -m "$CH")"
+OUT="${VV_OUT:-$HERE/iso-out}"
+REL="${VV_REL:-$HERE/release}"
+REPO_URL="${VV_REPO_URL:-https://github.com/YOUR-ACCOUNT/vaevictis}"
+VER=""; ISO=""; SIGN=0; FORCE=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --iso)   ISO="$2"; shift 2 ;;
+        --sign)  SIGN=1; shift ;;
+        --force) FORCE=1; shift ;;
+        -*)      echo "unknown option: $1" >&2; exit 2 ;;
+        *)       VER="$1"; shift ;;
+    esac
+done
+VER="${VER:-$(date +%Y.%m.%d)}"
+
+die() { echo "vv-release: $*" >&2; exit 1; }
+asroot() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
+[ -f "$CH/etc/debian_version" ] || die "not a Debian root filesystem: $CH"
+[ -n "$ISO" ] || ISO="$(ls -t "$OUT"/vaevictis-*.iso 2>/dev/null | head -1)"
+[ -f "$ISO" ] || die "no ISO found in $OUT (build one with: ./vv-iso build --release)"
+
+# ---------------------------------------------------------------- GATES: nothing personal may ship
+fails=()
+gate() { fails+=("$*"); }
+[ ! -s "$CH/etc/machine-id" ] || gate "machine-id is set (run: ./vv-chroot seal)"
+[ -z "$(asroot sh -c 'ls "$1"/etc/ssh/ssh_host_* 2>/dev/null' _ "$CH")" ] || gate "SSH host keys are inside (run: ./vv-chroot seal)"
+[ -z "$(asroot ls -A "$CH/etc/wireguard" 2>/dev/null)" ] || gate "WireGuard configs (private keys!) are inside /etc/wireguard"
+[ -z "$(asroot ls -A "$CH/etc/NetworkManager/system-connections" 2>/dev/null)" ] || gate "NetworkManager profiles (Wi-Fi passwords?) are inside"
+shadow="$(asroot cat "$CH/etc/shadow" 2>/dev/null || true)"
+root_hash="$(echo "$shadow" | awk -F: '$1=="root"{print $2}')"
+case "$root_hash" in '!'*|'*'*) ;; *) gate "root has a password hash inside the image (lock it: passwd -l root)" ;; esac
+while IFS=: read -r name _ uid _; do
+    if [ "$uid" -ge 1000 ] && [ "$uid" -lt 60000 ]; then
+        h="$(echo "$shadow" | awk -F: -v u="$name" '$1==u{print $2}')"
+        case "$h" in '!'*|'*'*|'') gate "user '$name' (uid $uid) exists in the image: remove it, live-config creates the live user" ;;
+                     *) gate "user '$name' (uid $uid) has a password hash inside the image: remove the user" ;; esac
+    fi
+done < "$CH/etc/passwd"
+[ -z "$(asroot find "$CH/root" "$CH/home" -maxdepth 3 \( -name .bash_history -o -name .python_history -o -name .viminfo \) 2>/dev/null)" ] \
+    || gate "shell history files are inside (run: ./vv-chroot seal)"
+[ ! -s "$CH/etc/resolv.conf" ] || [ -L "$CH/etc/resolv.conf" ] || gate "/etc/resolv.conf holds your DNS settings"
+newer="$(asroot find "$CH/etc" "$CH/usr/local" "$CH/usr/share/applications" "$CH/usr/share/icons" -type f -newer "$ISO" 2>/dev/null | head -3 || true)"
+[ -z "$newer" ] || gate "the chroot changed after this ISO was built (rebuild it): $(echo "$newer" | head -1)"
+
+if [ "${#fails[@]}" -gt 0 ]; then
+    echo "NOT READY TO PUBLISH:"; printf '  - %s\n' "${fails[@]}"
+    [ "$FORCE" = 1 ] || { echo; echo "Fix these (or use --force for a private test release)."; exit 1; }
+    echo "  (continuing because of --force: do NOT publish this one)"
+fi
+if [ -x "$HERE/vv-chroot" ] && "$HERE/vv-chroot" lang 2>/dev/null | grep -q "Files with Italian"; then
+    echo "note: Italian text still exists in some of your scripts (./vv-chroot lang)"
+fi
+
+# ---------------------------------------------------------------- release folder
+DEST="$REL/$VER"; NAME="vaevictis-$VER-amd64.iso"
+mkdir -p "$DEST"
+echo "[1/5] ISO -> $DEST/$NAME"
+ln -f "$ISO" "$DEST/$NAME" 2>/dev/null || cp --reflink=auto "$ISO" "$DEST/$NAME"
+
+echo "[2/5] checksums"
+( cd "$DEST" && sha256sum "$NAME" > SHA256SUMS )
+if [ "$SIGN" = 1 ]; then
+    command -v gpg >/dev/null || die "gpg not found"
+    ( cd "$DEST" && rm -f SHA256SUMS.asc && gpg --armor --detach-sign --output SHA256SUMS.asc SHA256SUMS ) \
+        || die "signing failed: create a key first (gpg --quick-generate-key 'VaeVictis Release <you@example.org>')"
+    gpg --armor --export > "$DEST/vaevictis-release-key.asc" 2>/dev/null || true
+    echo "      signed: SHA256SUMS.asc (+ public key)"
+else
+    echo "      not signed (add --sign once you have a GPG key)"
+fi
+
+echo "[3/5] package list and SBOM (CycloneDX)"
+dpkg-query --admindir="$CH/var/lib/dpkg" -W -f='${Package}\t${Version}\t${Architecture}\t${source:Package}\t${source:Version}\n' \
+    2>/dev/null | sort > "$DEST/.pkgs.tsv"
+awk -F'\t' '{printf "%s %s %s\n", $1, $2, $3}' "$DEST/.pkgs.tsv" > "$DEST/PACKAGES.txt"
+CH="$CH" VER="$VER" DEST="$DEST" python3 - <<'PYEND'
+import hashlib, json, os, time, urllib.parse
+ch, ver, dest = os.environ["CH"], os.environ["VER"], os.environ["DEST"]
+q = lambda s: urllib.parse.quote(s, safe="~")
+comps = []
+for line in open(os.path.join(dest, ".pkgs.tsv")):
+    p = line.rstrip("\n").split("\t")
+    if len(p) >= 3:
+        comps.append({"type": "library", "name": p[0], "version": p[1],
+                      "purl": f"pkg:deb/debian/{q(p[0])}@{q(p[1])}?arch={p[2]}&distro=trixie"})
+for d in ("usr/local/bin", "usr/local/libexec"):                     # our own code, with hashes
+    full = os.path.join(ch, d)
+    if os.path.isdir(full):
+        for f in sorted(os.listdir(full)):
+            fp = os.path.join(full, f)
+            if os.path.isfile(fp):
+                try:
+                    h = hashlib.sha256(open(fp, "rb").read()).hexdigest()
+                except OSError:
+                    continue
+                comps.append({"type": "application", "name": f, "version": ver, "supplier": {"name": "VaeVictis"},
+                              "description": "/" + d + "/" + f, "hashes": [{"alg": "SHA-256", "content": h}]})
+bom = {"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1,
+       "metadata": {"timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "component": {"type": "operating-system", "name": "VaeVictis OS", "version": ver}},
+       "components": comps}
+json.dump(bom, open(os.path.join(dest, "sbom.cdx.json"), "w"), indent=1)
+print("      %d components" % len(comps))
+PYEND
+
+echo "[4/5] source offer"
+{
+    cat <<EOF
+VaeVictis OS $VER - where the source code is
+
+Debian packages
+  Every Debian package on this ISO is built from a Debian source package. The sources, at the exact
+  versions listed below, are in the Debian archive (https://deb.debian.org/debian and
+  https://security.debian.org/debian-security) and permanently on https://snapshot.debian.org.
+  Each package's licence is in /usr/share/doc/PACKAGE/copyright inside the ISO.
+
+VaeVictis scripts and tools
+  /usr/local/bin and /usr/local/libexec inside the ISO are plain-text scripts, and the build tools are published at:
+  $REPO_URL
+
+Source packages and versions on this ISO:
+EOF
+    awk -F'\t' '{print "  " $4 " " $5}' "$DEST/.pkgs.tsv" | sort -u
+} > "$DEST/SOURCES.txt"
+rm -f "$DEST/.pkgs.tsv"
+
+echo "[5/5] build info"
+if command -v xorriso >/dev/null 2>&1; then
+    xorriso -osirrox on -indev "$ISO" -extract /boot/grub/grub.cfg "$DEST/grub.cfg.txt" >/dev/null 2>&1 || true
+fi
+{
+    echo "VaeVictis OS $VER"
+    echo "built:    $(date -u '+%Y-%m-%d %H:%M UTC')"
+    echo "ISO:      $NAME ($(du -h "$ISO" | cut -f1), $(stat -c %s "$ISO") bytes)"
+    echo "sha256:   $(cut -d' ' -f1 "$DEST/SHA256SUMS")"
+    echo "kernel:   $(readlink "$CH/vmlinuz" | sed 's#.*/vmlinuz-##')"
+    echo "packages: $(wc -l < "$DEST/PACKAGES.txt")"
+    echo "boot menu: see grub.cfg.txt (every kernel option is public)"
+} > "$DEST/BUILD-INFO.txt"
+
+echo
+echo "Release ready: $DEST"
+ls -lh "$DEST" | tail -n +2 | awk '{print "  " $5 "  " $9}'
+SZ="$(stat -c %s "$DEST/$NAME")"
+[ "$SZ" -lt 2147483648 ] || echo "WARNING: the ISO is 2 GiB or more: GitHub Releases would refuse it (limit: under 2 GiB per file)"

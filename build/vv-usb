@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# vv-usb - write an ISO to a USB stick, with guards, and check the result
+#
+#   vv-usb /dev/sdX [ISO]       ISO defaults to the newest in iso-out/
+#
+# Refuses: anything that is not a whole disk, a disk with a mounted system folder (/, /boot, /home, /usr, /var),
+# a disk holding LUKS (your encrypted backup drive; override: VV_USB_ALLOW_LUKS=1), or a disk smaller than the ISO.
+# Then it shows what is on the disk and asks you to type the device name. Everything on it is erased.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+dev="${1:-}"
+die() { echo "vv-usb: $*" >&2; exit 1; }
+[ -n "$dev" ] || { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+iso="${2:-$(ls -t "$HERE"/iso-out/vaevictis-*.iso 2>/dev/null | head -1)}"
+[ -f "$iso" ] || die "no ISO found (build one with ./vv-iso build)"
+test_mode="${VV_USB_TEST:-}"        # tests only: a plain file stands in for the device
+
+if [ -z "$test_mode" ]; then
+    [ "$(id -u)" -eq 0 ] || exec sudo -E "$0" "$@"
+    [ -b "$dev" ] || die "$dev is not a block device"
+    [ "$(lsblk -dno TYPE "$dev")" = "disk" ] || die "$dev is not a whole disk (use /dev/sdb, not /dev/sdb1)"
+    mounts="$(lsblk -nro MOUNTPOINTS "$dev" 2>/dev/null || lsblk -nro MOUNTPOINT "$dev")"
+    echo "$mounts" | grep -qxE '/|/boot|/boot/efi|/home|/usr|/var' && die "$dev holds a system folder of this computer: refusing"
+    if lsblk -nro FSTYPE "$dev" | grep -q crypto_LUKS && [ -z "${VV_USB_ALLOW_LUKS:-}" ]; then
+        die "$dev contains an encrypted (LUKS) volume: that looks like a backup drive, refusing (VV_USB_ALLOW_LUKS=1 overrides)"
+    fi
+    size=$(blockdev --getsize64 "$dev")
+else
+    [ -e "$dev" ] || die "$dev does not exist"
+    size=$(stat -c %s "$dev")
+fi
+isosize=$(stat -c %s "$iso")
+[ "$size" -ge "$isosize" ] || die "$dev ($size bytes) is smaller than the ISO ($isosize bytes)"
+
+echo "ISO     : $(basename "$iso")  ($(du -h "$iso" | cut -f1), built $(date -r "$iso" '+%d %b %H:%M'))"
+echo "Target  : $dev"
+if [ -z "$test_mode" ]; then
+    lsblk -o NAME,SIZE,TYPE,RM,TRAN,MODEL,FSTYPE,LABEL,MOUNTPOINTS "$dev" 2>/dev/null || lsblk "$dev"
+    [ "$(cat "/sys/block/$(basename "$dev")/removable" 2>/dev/null || echo 0)" = 1 ] \
+        || echo "note: this disk does not report itself as removable (USB SSDs often do not): be sure it is the stick"
+fi
+echo
+echo "EVERYTHING on $dev will be erased."
+read -rp "Type the device name ($dev) to confirm: " answer
+[ "$answer" = "$dev" ] || die "not confirmed, nothing was written"
+
+if [ -z "$test_mode" ]; then
+    for p in $(lsblk -nro NAME "$dev" | tail -n +2); do umount "/dev/$p" 2>/dev/null || true; done
+fi
+echo "writing..."
+dd if="$iso" of="$dev" bs=4M status=progress conv=fsync$([ -n "$test_mode" ] && echo ",notrunc")
+sync
+echo "checking what was written (reads the stick back)..."
+if cmp -n "$isosize" "$iso" "$dev"; then
+    echo "OK: the stick matches the ISO byte for byte."
+else
+    die "the stick does NOT match the ISO: do not use it (try again, or another stick or port)"
+fi
+[ -z "$test_mode" ] && command -v udevadm >/dev/null && udevadm settle || true
+echo "Done. Eject it from the file manager (or: sudo eject $dev) before pulling it out."

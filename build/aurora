@@ -1,0 +1,1000 @@
+#!/usr/bin/env python3
+"""
+Aurora - Ultimate Carbon Dark Edition
+Privacy: Zero network access, 100% offline
+"""
+import sys
+import os
+import sqlite3
+import random
+import socket
+import fcntl
+import subprocess
+from pathlib import Path
+from datetime import timedelta
+
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QListWidget, QListWidgetItem, QSlider,
+    QMenuBar, QMenu, QStatusBar, QFileDialog, QSplitter, QLineEdit,
+    QInputDialog, QMessageBox, QGroupBox, QTableWidget, QTableWidgetItem,
+    QAbstractItemView, QHeaderView
+)
+from PyQt6.QtCore import Qt, QTimer, QSize, QSocketNotifier
+from PyQt6.QtGui import QAction, QIcon, QColor, QKeySequence, QShortcut, QPainter, QBrush
+
+try:
+    from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+    USE_QT = True
+except ImportError:
+    USE_QT = False
+
+import mutagen
+
+STYLESHEET = """
+QMainWindow, QWidget {
+    background-color: #0b0b0e;
+    color: #e2e2e5;
+    font-family: system-ui, sans-serif;
+}
+QSplitter::handle {
+    background-color: #0b0b0e;
+}
+QListWidget, QTableWidget {
+    background-color: #0b0b0e;
+    border: none;
+    outline: none;
+    font-size: 14px;
+}
+QListWidget::item {
+    padding: 10px;
+    border-radius: 6px;
+    margin: 2px 8px;
+    color: #a0a0a5;
+}
+QListWidget::item:selected {
+    background-color: #1c1c22;
+    color: #ffffff;
+    font-weight: 600;
+}
+QListWidget::item:hover:!selected {
+    background-color: #15151a;
+}
+QTableWidget::item {
+    padding: 8px 5px;
+    border-bottom: 1px solid #15151a;
+}
+QTableWidget::item:selected {
+    background-color: #1c1c22;
+    color: #ffffff;
+}
+QHeaderView::section {
+    background-color: #0b0b0e;
+    color: #707075;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 8px 5px;
+    text-align: left;
+}
+QPushButton {
+    background-color: transparent;
+    color: #a0a0a5;
+    border: none;
+    border-radius: 8px;
+    padding: 8px;
+    font-weight: 600;
+    font-size: 13px;
+}
+QPushButton:hover {
+    color: #ffffff;
+    background-color: #1c1c22;
+}
+QPushButton:checked {
+    color: #ffffff;
+    background-color: #2a2a32;
+}
+QLineEdit {
+    background-color: #15151a;
+    border: 1px solid #222228;
+    border-radius: 18px;
+    padding: 8px 15px;
+    color: #ffffff;
+    font-size: 14px;
+}
+QGroupBox {
+    border: none;
+    margin-top: 20px;
+    font-weight: 600;
+    color: #707075;
+    font-size: 12px;
+    letter-spacing: 1px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 3px;
+}
+QSlider::groove:horizontal {
+    border-radius: 2px;
+    height: 4px;
+    background: #222228;
+}
+QSlider::handle:horizontal {
+    background: #ffffff;
+    width: 12px;
+    margin: -4px 0;
+    border-radius: 6px;
+}
+QSlider::groove:vertical {
+    border-radius: 2px;
+    width: 4px;
+    background: #222228;
+}
+QSlider::handle:vertical {
+    background: #ffffff;
+    height: 12px;
+    margin: 0 -4px;
+    border-radius: 6px;
+}
+QScrollBar:vertical {
+    background: #15151a;
+    width: 12px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #2a2a32;
+    border-radius: 6px;
+    min-height: 30px;
+    margin: 2px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #3a3a42;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+"""
+
+class SpectrumAnalyzer(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(120)
+        self.num_bars = 45
+        self.values = [0.0] * self.num_bars
+        self.targets = [0.0] * self.num_bars
+        self.is_playing = False
+        
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._animate)
+        self.timer.start(50)
+
+    def set_playing(self, state):
+        self.is_playing = state
+        if not state:
+            self.targets = [0.0] * self.num_bars
+
+    def _animate(self):
+        if self.is_playing:
+            for i in range(self.num_bars):
+                if random.random() > 0.7:
+                    multiplier = 1.0 - abs((i - self.num_bars/2) / (self.num_bars/2))
+                    self.targets[i] = random.uniform(0.1, 1.0) * (0.4 + 0.6 * multiplier)
+        
+        needs_update = False
+        for i in range(self.num_bars):
+            diff = self.targets[i] - self.values[i]
+            if abs(diff) > 0.01:
+                self.values[i] += diff * 0.3
+                needs_update = True
+                
+        if needs_update or self.is_playing:
+            self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        w = self.width()
+        h = self.height()
+        bar_w = w / self.num_bars
+        padding = max(1, bar_w * 0.2)
+        actual_w = bar_w - padding
+        
+        painter.setPen(Qt.PenStyle.NoPen)
+        for i in range(self.num_bars):
+            bar_h = self.values[i] * h * 0.8
+            x = i * bar_w + padding / 2
+            y = h - bar_h
+            
+            intensity = int(100 + 155 * self.values[i])
+            color = QColor(intensity, intensity, intensity, 220)
+            painter.setBrush(QBrush(color))
+            painter.drawRoundedRect(int(x), int(y), int(actual_w), int(bar_h), 2, 2)
+
+
+class Aurora(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Aurora Music Player")
+        self.setMinimumSize(1100, 750)
+        self.setStyleSheet(STYLESHEET)
+        
+        self.last_dir = str(Path.home())
+        self.is_seeking = False
+        self.lock_socket = None
+        self.notifier = None
+        
+        self.icon_path = os.path.join(Path.home(), ".aurora", "icon.svg")
+        if os.path.exists(self.icon_path):
+            self.setWindowIcon(QIcon(self.icon_path))
+        
+        self.db_path = os.path.join(Path.home(), ".aurora", "library.db")
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(self.db_path)
+        
+        self.conn.execute('''CREATE TABLE IF NOT EXISTS tracks (
+            id INTEGER PRIMARY KEY, path TEXT UNIQUE, title TEXT, artist TEXT, duration REAL)''')
+        self.conn.execute('''CREATE TABLE IF NOT EXISTS playlists (
+            id INTEGER PRIMARY KEY, name TEXT UNIQUE)''')
+        self.conn.execute('''CREATE TABLE IF NOT EXISTS playlist_tracks (
+            playlist_id INTEGER, track_id INTEGER,
+            FOREIGN KEY(playlist_id) REFERENCES playlists(id),
+            FOREIGN KEY(track_id) REFERENCES tracks(id),
+            UNIQUE(playlist_id, track_id))''')
+        self.conn.commit()
+        
+        if USE_QT:
+            self.player = QMediaPlayer()
+            self.audio = QAudioOutput()
+            self.player.setAudioOutput(self.audio)
+            self.player.positionChanged.connect(self._on_position_changed)
+            self.player.mediaStatusChanged.connect(self._on_media_status_changed)
+            self.player.playbackStateChanged.connect(self._on_state_changed)
+        else:
+            self.player = None
+        
+        self.playlist = []
+        self._setup_ui()
+        self._setup_menu()
+        self._setup_shortcuts()
+        self._load_sidebar()
+    
+    def setup_ipc(self, lock_socket):
+        self.lock_socket = lock_socket
+        self.notifier = QSocketNotifier(self.lock_socket.fileno(), QSocketNotifier.Type.Read, self)
+        self.notifier.activated.connect(self._handle_ipc)
+
+    def _handle_ipc(self):
+        try:
+            data, _ = self.lock_socket.recvfrom(4096)
+            msg = data.decode('utf-8')
+            if msg.startswith(RAISE_PREFIX):
+                # a second launch asks us to show ourselves, and waits for the answer
+                self.showNormal()
+                self.raise_()
+                self.activateWindow()
+                self.lock_socket.sendto(b'OK', '\0' + msg[len(RAISE_PREFIX):])
+            elif os.path.exists(msg):
+                self.open_external_file(msg)
+        except Exception:
+            pass
+
+    def open_external_file(self, path):
+        meta = self._get_meta(path)
+        self.conn.execute('INSERT OR IGNORE INTO tracks (path,title,artist,duration) VALUES (?,?,?,?)',
+            (path, meta['title'], meta['artist'], meta['duration']))
+        self.conn.commit()
+        
+        self.sidebar.setCurrentRow(0)
+        self._load_current_view()
+        self.play(path)
+
+    def _setup_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(15, 15, 15, 10)
+        
+        top_layout = QHBoxLayout()
+        hdr = QLabel("AURORA")
+        hdr.setStyleSheet("font-size: 18px; font-weight: 600; letter-spacing: 1px;")
+        top_layout.addWidget(hdr)
+        
+        top_layout.addStretch()
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search library...")
+        self.search.setFixedWidth(250)
+        self.search.textChanged.connect(self._filter_tracks)
+        top_layout.addWidget(self.search)
+        main_layout.addLayout(top_layout)
+        
+        main_layout.addSpacing(15)
+        
+        split = QSplitter(Qt.Orientation.Horizontal)
+        
+        sidebar_widget = QWidget()
+        sidebar_layout = QVBoxLayout(sidebar_widget)
+        sidebar_layout.setContentsMargins(0, 0, 10, 0)
+        
+        lbl_lib = QLabel("LIBRARY")
+        lbl_lib.setStyleSheet("color: #707075; font-size: 12px; font-weight: 600; margin-left: 10px;")
+        sidebar_layout.addWidget(lbl_lib)
+        
+        self.sidebar = QListWidget()
+        self.sidebar.currentRowChanged.connect(self._load_current_view)
+        sidebar_layout.addWidget(self.sidebar)
+        
+        lbl_pl = QLabel("PLAYLISTS")
+        lbl_pl.setStyleSheet("color: #707075; font-size: 12px; font-weight: 600; margin-left: 10px; margin-top: 15px;")
+        sidebar_layout.addWidget(lbl_pl)
+        
+        btn_new_pl = QPushButton("Add Playlist")
+        btn_new_pl.clicked.connect(self.create_playlist_with_import)
+        sidebar_layout.addWidget(btn_new_pl)
+        split.addWidget(sidebar_widget)
+        
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["TITLE", "ARTIST", "DURATION", ""])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(2, 90)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(3, 50)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setShowGrid(False)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
+        self.table.itemDoubleClicked.connect(self._on_table_double_click)
+        split.addWidget(self.table)
+        
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(15, 0, 0, 0)
+        
+        mixer_group = QGroupBox("MIXER")
+        ml = QHBoxLayout(mixer_group)
+        
+        vol_layout = QVBoxLayout()
+        vol_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        vol_layout.addWidget(QLabel("VOL", alignment=Qt.AlignmentFlag.AlignCenter))
+        self.vol_slider = QSlider(Qt.Orientation.Vertical)
+        self.vol_slider.setRange(0, 100)
+        self.vol_slider.setValue(70)
+        self.vol_slider.valueChanged.connect(self.set_vol)
+        vol_layout.addWidget(self.vol_slider, alignment=Qt.AlignmentFlag.AlignHCenter)
+        ml.addLayout(vol_layout)
+        
+        spd_layout = QVBoxLayout()
+        spd_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        spd_layout.addWidget(QLabel("SPD", alignment=Qt.AlignmentFlag.AlignCenter))
+        self.speed_slider = QSlider(Qt.Orientation.Vertical)
+        self.speed_slider.setRange(50, 200)
+        self.speed_slider.setValue(100)
+        self.speed_slider.valueChanged.connect(self.set_speed)
+        spd_layout.addWidget(self.speed_slider, alignment=Qt.AlignmentFlag.AlignHCenter)
+        ml.addLayout(spd_layout)
+        
+        right_layout.addWidget(mixer_group)
+        
+        spec_group = QGroupBox("SPECTRUM")
+        sl = QVBoxLayout(spec_group)
+        self.visualizer = SpectrumAnalyzer()
+        sl.addWidget(self.visualizer)
+        right_layout.addWidget(spec_group)
+        
+        split.addWidget(right_panel)
+        
+        split.setStretchFactor(0, 2)
+        split.setStretchFactor(1, 6)
+        split.setStretchFactor(2, 3)
+        main_layout.addWidget(split, stretch=1)
+        
+        main_layout.addSpacing(15)
+        
+        player_bar = QWidget()
+        player_bar.setStyleSheet("background: #111115; border-radius: 12px;")
+        pb_layout = QVBoxLayout(player_bar)
+        pb_layout.setContentsMargins(15, 10, 15, 10)
+        
+        prog_layout = QHBoxLayout()
+        self.time_cur = QLabel("0:00")
+        self.time_cur.setStyleSheet("color: #707075; font-size: 12px;")
+        
+        self.progress = QSlider(Qt.Orientation.Horizontal)
+        self.progress.sliderPressed.connect(self._on_slider_pressed)
+        self.progress.sliderReleased.connect(self._on_seek)
+        
+        self.time_tot = QLabel("0:00")
+        self.time_tot.setStyleSheet("color: #707075; font-size: 12px;")
+        
+        prog_layout.addWidget(self.time_cur)
+        prog_layout.addWidget(self.progress)
+        prog_layout.addWidget(self.time_tot)
+        pb_layout.addLayout(prog_layout)
+        
+        ctrl_layout = QHBoxLayout()
+        
+        self.lbl_info = QLabel("<span style='font-weight:600; font-size:14px; color:#ffffff;'>Ready to play</span>")
+        self.lbl_info.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_info.setMinimumWidth(200)
+        ctrl_layout.addWidget(self.lbl_info)
+        
+        ctrl_layout.addStretch()
+        
+        self.btn_shuffle = QPushButton("Shuffle")
+        self.btn_shuffle.setCheckable(True)
+        
+        b_prev = QPushButton("Prev")
+        b_prev.clicked.connect(self.prev)
+        
+        self.btn_play = QPushButton("Play")
+        self.btn_play.setStyleSheet("background-color: #e2e2e5; color: #0b0b0e; border-radius: 20px; min-width: 60px; min-height: 40px; font-size: 13px; font-weight: 600;")
+        self.btn_play.clicked.connect(self.toggle_play)
+        
+        b_next = QPushButton("Next")
+        b_next.clicked.connect(self.next)
+
+        self.btn_repeat = QPushButton("Repeat")
+        self.btn_repeat.setCheckable(True)
+        
+        ctrl_layout.addWidget(self.btn_shuffle)
+        ctrl_layout.addWidget(b_prev)
+        ctrl_layout.addWidget(self.btn_play)
+        ctrl_layout.addWidget(b_next)
+        ctrl_layout.addWidget(self.btn_repeat)
+        
+        ctrl_layout.addStretch()
+        
+        self.lbl_speed_val = QLabel("1.0x")
+        self.lbl_speed_val.setStyleSheet("color: #707075; font-weight: 600; font-size: 12px;")
+        self.lbl_speed_val.setMinimumWidth(150)
+        self.lbl_speed_val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        ctrl_layout.addWidget(self.lbl_speed_val)
+        
+        pb_layout.addLayout(ctrl_layout)
+        main_layout.addWidget(player_bar)
+
+    def _setup_menu(self):
+        mb = self.menuBar()
+        fm = mb.addMenu("File")
+        
+        a_open = QAction("Open Tracks...", self)
+        a_open.setShortcut("Ctrl+O")
+        a_open.triggered.connect(self.open_files)
+        fm.addAction(a_open)
+        
+        a_folder = QAction("Add Folder...", self)
+        a_folder.setShortcut("Ctrl+F")
+        a_folder.triggered.connect(self.add_folder)
+        fm.addAction(a_folder)
+        
+        fm.addSeparator()
+        a_exit = QAction("Quit", self)
+        a_exit.setShortcut("Ctrl+Q")
+        a_exit.triggered.connect(self.close)
+        fm.addAction(a_exit)
+
+    def _setup_shortcuts(self):
+        QShortcut(QKeySequence(Qt.Key.Key_Space), self).activated.connect(self.toggle_play)
+
+    def _load_sidebar(self):
+        self.sidebar.blockSignals(True)
+        self.sidebar.clear()
+        
+        it_all = QListWidgetItem("All Tracks")
+        it_all.setData(Qt.ItemDataRole.UserRole, 0)
+        self.sidebar.addItem(it_all)
+        
+        cur = self.conn.cursor()
+        cur.execute("SELECT id, name FROM playlists")
+        for pl_id, name in cur.fetchall():
+            it = QListWidgetItem(f"{name}")
+            it.setData(Qt.ItemDataRole.UserRole, pl_id)
+            self.sidebar.addItem(it)
+            
+        self.sidebar.blockSignals(False)
+        self.sidebar.setCurrentRow(0)
+        self._load_current_view()
+
+    def _load_current_view(self):
+        curr_item = self.sidebar.currentItem()
+        if not curr_item: return
+        pl_id = curr_item.data(Qt.ItemDataRole.UserRole)
+        
+        self.table.setRowCount(0)
+        self.playlist.clear()
+        cur = self.conn.cursor()
+        
+        if pl_id == 0:
+            cur.execute('SELECT id, path, title, artist, duration FROM tracks ORDER BY artist, title')
+        else:
+            cur.execute('''SELECT t.id, t.path, t.title, t.artist, t.duration 
+                           FROM tracks t JOIN playlist_tracks pt ON t.id = pt.track_id 
+                           WHERE pt.playlist_id = ? ORDER BY t.artist, t.title''', (pl_id,))
+            
+        for row_idx, (db_id, path, title, artist, dur) in enumerate(cur.fetchall()):
+            self.table.insertRow(row_idx)
+            file_exists = os.path.exists(path)
+            
+            t_item = QTableWidgetItem(title if file_exists else f"[OFFLINE] {title}")
+            a_item = QTableWidgetItem(artist)
+            d_item = QTableWidgetItem(self.fmt_time(dur) if dur > 0 else "0:00")
+            
+            t_item.setData(Qt.ItemDataRole.UserRole, {'path': path, 'id': db_id})
+            
+            if not file_exists:
+                gray = QColor("#505055")
+                t_item.setForeground(gray)
+                a_item.setForeground(gray)
+                d_item.setForeground(gray)
+            
+            self.table.setItem(row_idx, 0, t_item)
+            self.table.setItem(row_idx, 1, a_item)
+            self.table.setItem(row_idx, 2, d_item)
+            
+            action_btn = QPushButton("Del")
+            action_btn.setStyleSheet("QPushButton { background: none; color: #505055; border: none; padding: 4px; } QPushButton:hover { color: #ff5555; }")
+            action_btn.setFixedSize(40, 30)
+            
+            if pl_id == 0:
+                action_btn.clicked.connect(lambda checked, tid=db_id: self._remove_from_library(tid))
+            else:
+                action_btn.clicked.connect(lambda checked, pid=pl_id, tid=db_id: self._remove_from_playlist(pid, tid))
+                
+            self.table.setCellWidget(row_idx, 3, action_btn)
+            
+            self.playlist.append(path)
+
+    def _on_table_double_click(self, item):
+        row = item.row()
+        track_data = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        self.play(track_data['path'])
+
+    def _show_context_menu(self, pos):
+        item = self.table.itemAt(pos)
+        if not item: return
+        track_data = self.table.item(item.row(), 0).data(Qt.ItemDataRole.UserRole)
+        
+        menu = QMenu()
+        menu.setStyleSheet("QMenu { background: #15151a; color: white; border: 1px solid #222228; } QMenu::item:selected { background: #2a2a32; }")
+        
+        add_menu = menu.addMenu("Add to playlist...")
+        cur = self.conn.cursor()
+        cur.execute("SELECT id, name FROM playlists")
+        playlists = cur.fetchall()
+        
+        if not playlists:
+            act = add_menu.addAction("No playlists available")
+            act.setEnabled(False)
+        else:
+            for pl_id, pl_name in playlists:
+                act = add_menu.addAction(f"{pl_name}")
+                act.triggered.connect(lambda checked, pid=pl_id, tid=track_data['id']: self._add_to_playlist(pid, tid))
+        
+        curr_sidebar = self.sidebar.currentItem()
+        if curr_sidebar and curr_sidebar.data(Qt.ItemDataRole.UserRole) != 0:
+            act_rm = menu.addAction("Remove from playlist")
+            act_rm.triggered.connect(lambda checked, pid=curr_sidebar.data(Qt.ItemDataRole.UserRole), tid=track_data['id']: self._remove_from_playlist(pid, tid))
+            
+        menu.addSeparator()
+        act_del = menu.addAction("Delete from Library")
+        act_del.triggered.connect(lambda checked, tid=track_data['id']: self._remove_from_library(tid))
+        
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def create_playlist_with_import(self):
+        name, ok = QInputDialog.getText(self, "New Playlist", "Playlist Name:")
+        if ok and name.strip():
+            try:
+                cursor = self.conn.execute("INSERT INTO playlists (name) VALUES (?)", (name.strip(),))
+                self.conn.commit()
+                pl_id = cursor.lastrowid
+                
+                files, _ = QFileDialog.getOpenFileNames(
+                    self, f"Add tracks to '{name}'", self.last_dir, 
+                    "Audio (*.mp3 *.flac *.ogg *.wav);;All Files (*)"
+                )
+                
+                if files:
+                    self.last_dir = str(Path(files[0]).parent)
+                    for path in files:
+                        meta = self._get_meta(path)
+                        self.conn.execute('''INSERT OR IGNORE INTO tracks (path,title,artist,duration) 
+                                            VALUES (?,?,?,?)''',
+                            (path, meta['title'], meta['artist'], meta['duration']))
+                        
+                        cur = self.conn.cursor()
+                        cur.execute("SELECT id FROM tracks WHERE path=?", (path,))
+                        result = cur.fetchone()
+                        if result:
+                            try:
+                                self.conn.execute("INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id) VALUES (?, ?)",
+                                                 (pl_id, result[0]))
+                            except sqlite3.IntegrityError:
+                                pass
+                    self.conn.commit()
+                    
+                self._load_sidebar()
+                
+            except sqlite3.IntegrityError:
+                QMessageBox.warning(self, "Error", "Playlist already exists!")
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to create playlist: {str(e)}")
+
+    def _add_to_playlist(self, pl_id, track_id):
+        try:
+            self.conn.execute("INSERT INTO playlist_tracks (playlist_id, track_id) VALUES (?, ?)", (pl_id, track_id))
+            self.conn.commit()
+        except sqlite3.IntegrityError:
+            pass
+
+    def _remove_from_playlist(self, pl_id, track_id):
+        self.conn.execute("DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?", (pl_id, track_id))
+        self.conn.commit()
+        self._load_current_view()
+
+    def _remove_from_library(self, track_id):
+        self.conn.execute("DELETE FROM playlist_tracks WHERE track_id = ?", (track_id,))
+        self.conn.execute("DELETE FROM tracks WHERE id = ?", (track_id,))
+        self.conn.commit()
+        self._load_current_view()
+
+    def _get_meta(self, path):
+        try:
+            audio = mutagen.File(path, easy=True)
+            title = list(audio.get('title', [Path(path).stem]))[0] if audio else Path(path).stem
+            artist = list(audio.get('artist', ['Unknown']))[0] if audio else 'Unknown'
+            
+            duration = 0
+            if audio:
+                duration = getattr(audio, 'length', 0)
+                if not duration and hasattr(audio, 'info'):
+                    duration = getattr(audio.info, 'length', 0)
+                if not duration and hasattr(audio, 'info'):
+                    duration = getattr(audio.info, 'duration', 0)
+            
+            if duration <= 0:
+                try:
+                    result = subprocess.run(
+                        ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                         '-of', 'default=noprint_wrappers=1:nokey=1', path],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result.stdout.strip():
+                        duration = float(result.stdout.strip())
+                except Exception:
+                    duration = 0
+                
+        except Exception:
+            title, artist, duration = Path(path).stem, 'Unknown', 0
+        
+        return {'title': title, 'artist': artist, 'duration': duration}
+
+    def _import_and_link(self, paths):
+        curr_item = self.sidebar.currentItem()
+        pl_id = curr_item.data(Qt.ItemDataRole.UserRole) if curr_item else 0
+        
+        for path in paths:
+            meta = self._get_meta(path)
+            self.conn.execute('INSERT OR IGNORE INTO tracks (path,title,artist,duration) VALUES (?,?,?,?)',
+                (path, meta['title'], meta['artist'], meta['duration']))
+            
+            if pl_id != 0:
+                cur = self.conn.cursor()
+                cur.execute("SELECT id FROM tracks WHERE path=?", (path,))
+                result = cur.fetchone()
+                if result:
+                    try:
+                        self.conn.execute("INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id) VALUES (?, ?)", (pl_id, result[0]))
+                    except sqlite3.IntegrityError:
+                        pass
+        self.conn.commit()
+        self._load_current_view()
+
+    def open_files(self):
+        files, _ = QFileDialog.getOpenFileNames(self, "Open Audio Files", self.last_dir, "Audio (*.mp3 *.flac *.ogg *.wav);;All Files (*)")
+        if files:
+            self.last_dir = str(Path(files[0]).parent)
+            self._import_and_link(files)
+
+    def add_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Music Folder", self.last_dir)
+        if folder:
+            self.last_dir = folder
+            valid_exts = {'.mp3', '.flac', '.ogg', '.wav'}
+            files_to_add = []
+            for root, _, files in os.walk(folder):
+                for file in files:
+                    if os.path.splitext(file)[1].lower() in valid_exts:
+                        files_to_add.append(os.path.join(root, file))
+            self._import_and_link(files_to_add)
+    
+    def fmt_time(self, s):
+        if not s or s <= 0:
+            return "0:00"
+        td = timedelta(seconds=int(s))
+        total_seconds = int(td.total_seconds())
+        mins = total_seconds // 60
+        secs = total_seconds % 60
+        return f"{mins}:{secs:02d}"
+    
+    def play(self, path):
+        if not os.path.exists(path):
+            QMessageBox.warning(self, "Offline", "Track is offline.")
+            return
+
+        meta = self._get_meta(path)
+        self.lbl_info.setText(f"<span style='font-weight:600; font-size:14px; color:#ffffff;'>{meta['title']}</span><br><span style='color:#a0a0a5; font-size:12px; font-weight:normal;'>{meta['artist']}</span>")
+        
+        try:
+            icon_arg = self.icon_path if os.path.exists(self.icon_path) else 'multimedia-audio-player'
+            subprocess.Popen(['notify-send', '-a', 'Aurora', '-i', icon_arg, meta['title'], meta['artist']])
+        except Exception:
+            pass
+        
+        if USE_QT and self.player:
+            from PyQt6.QtCore import QUrl
+            self.player.setSource(QUrl.fromLocalFile(path))
+            self.player.play()
+    
+    def toggle_play(self):
+        if USE_QT and self.player:
+            if not self.player.source().isValid():
+                if self.playlist:
+                    self.play(self.playlist[0])
+                return
+            state = self.player.playbackState()
+            if state == QMediaPlayer.PlaybackState.PlayingState:
+                self.player.pause()
+            else:
+                self.player.play()
+    
+    def _on_state_changed(self, state):
+        if state == QMediaPlayer.PlaybackState.PlayingState:
+            self.btn_play.setText("Pause")
+            self.visualizer.set_playing(True)
+        else:
+            self.btn_play.setText("Play")
+            self.visualizer.set_playing(False)
+
+    def stop(self):
+        if USE_QT and self.player:
+            self.player.stop()
+            self.progress.setValue(0)
+            self.time_cur.setText("0:00")
+            self.visualizer.set_playing(False)
+    
+    def next(self):
+        if len(self.playlist) > 0:
+            if self.btn_shuffle.isChecked():
+                idx = random.randint(0, len(self.playlist) - 1)
+            else:
+                try:
+                    current = self.player.source().toLocalFile() if self.player.source().isValid() else self.playlist[0]
+                    idx = (self.playlist.index(current) + 1) % len(self.playlist)
+                except ValueError:
+                    idx = 0
+            self.play(self.playlist[idx])
+    
+    def prev(self):
+        if len(self.playlist) > 0:
+            try:
+                current = self.player.source().toLocalFile() if self.player.source().isValid() else self.playlist[0]
+                idx = (self.playlist.index(current) - 1) % len(self.playlist)
+            except ValueError:
+                idx = 0
+            self.play(self.playlist[idx])
+    
+    def set_vol(self, v):
+        if USE_QT and self.audio:
+            self.audio.setVolume(v / 100.0)
+
+    def set_speed(self, v):
+        rate = v / 100.0
+        self.lbl_speed_val.setText(f"{rate:.1f}x")
+        if USE_QT and self.player:
+            self.player.setPlaybackRate(rate)
+    
+    def _on_slider_pressed(self):
+        self.is_seeking = True
+
+    def _on_seek(self):
+        if USE_QT and self.player:
+            self.player.setPosition(self.progress.value())
+        self.is_seeking = False
+    
+    def _on_position_changed(self, pos):
+        dur = self.player.duration()
+        if dur > 0:
+            self.progress.setMaximum(dur)
+            if not self.is_seeking:
+                self.progress.setValue(pos)
+            self.time_cur.setText(self.fmt_time(pos / 1000))
+            self.time_tot.setText(self.fmt_time(dur / 1000))
+
+    def _on_media_status_changed(self, status):
+        if USE_QT and status == QMediaPlayer.MediaStatus.EndOfMedia:
+            if self.btn_repeat.isChecked():
+                self.player.setPosition(0)
+                self.player.play()
+            else:
+                self.next()
+    
+    def _filter_tracks(self, q):
+        curr_item = self.sidebar.currentItem()
+        if not curr_item: return
+        pl_id = curr_item.data(Qt.ItemDataRole.UserRole)
+        
+        self.table.setRowCount(0)
+        cur = self.conn.cursor()
+        
+        if pl_id == 0:
+            cur.execute("SELECT id, path, title, artist, duration FROM tracks WHERE title LIKE ? OR artist LIKE ?", (f'%{q}%', f'%{q}%'))
+        else:
+            cur.execute('''SELECT t.id, t.path, t.title, t.artist, t.duration
+                           FROM tracks t JOIN playlist_tracks pt ON t.id = pt.track_id 
+                           WHERE pt.playlist_id = ? AND (t.title LIKE ? OR t.artist LIKE ?)''', 
+                           (pl_id, f'%{q}%', f'%{q}%'))
+                           
+        for row_idx, (db_id, path, title, artist, dur) in enumerate(cur.fetchall()):
+            self.table.insertRow(row_idx)
+            file_exists = os.path.exists(path)
+            
+            t_item = QTableWidgetItem(title if file_exists else f"[OFFLINE] {title}")
+            a_item = QTableWidgetItem(artist)
+            d_item = QTableWidgetItem(self.fmt_time(dur) if dur > 0 else "0:00")
+            t_item.setData(Qt.ItemDataRole.UserRole, {'path': path, 'id': db_id})
+            
+            if not file_exists:
+                gray = QColor("#505055")
+                t_item.setForeground(gray)
+                a_item.setForeground(gray)
+                d_item.setForeground(gray)
+            
+            self.table.setItem(row_idx, 0, t_item)
+            self.table.setItem(row_idx, 1, a_item)
+            self.table.setItem(row_idx, 2, d_item)
+            
+            action_btn = QPushButton("Del")
+            action_btn.setStyleSheet("QPushButton { background: none; color: #505055; border: none; padding: 4px; } QPushButton:hover { color: #ff5555; }")
+            action_btn.setFixedSize(40, 30)
+            
+            if pl_id == 0:
+                action_btn.clicked.connect(lambda checked, tid=db_id: self._remove_from_library(tid))
+            else:
+                action_btn.clicked.connect(lambda checked, pid=pl_id, tid=db_id: self._remove_from_playlist(pid, tid))
+                
+            self.table.setCellWidget(row_idx, 3, action_btn)
+
+def setup_desktop_integration():
+    desktop_dir = Path.home() / ".local" / "share" / "applications"
+    desktop_dir.mkdir(parents=True, exist_ok=True)
+    desktop_file = desktop_dir / "aurora.desktop"
+
+    # VaeVictis ships its own launcher (aurora.desktop in /usr/share/applications) with the right icon, vv-aurora.
+    # A copy in the user's home takes precedence over it, and the old copy said "Icon=aurora": a name that does not
+    # exist, so the dock showed a generic icon. When a system launcher exists, do not create one, and remove an old
+    # copy that has that wrong icon.
+    system_launcher = any(os.path.exists(p) for p in ("/usr/local/share/applications/aurora.desktop",
+                                                      "/usr/share/applications/aurora.desktop"))
+    if system_launcher:
+        try:
+            if desktop_file.exists() and "Icon=aurora\n" in desktop_file.read_text():
+                desktop_file.unlink()
+                subprocess.run(["update-desktop-database", str(desktop_dir)], check=False)
+        except Exception:
+            pass
+        return
+
+    if not desktop_file.exists():
+        python_exec = sys.executable
+        script_path = os.path.abspath(__file__)
+        
+        desktop_content = f"""[Desktop Entry]
+Name=Aurora
+Comment=Aurora Music Player
+Exec={python_exec} {script_path} %F
+Icon=aurora
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Player;
+MimeType=audio/mpeg;audio/x-flac;audio/flac;audio/ogg;audio/x-wav;
+"""
+        try:
+            with open(desktop_file, "w") as f:
+                f.write(desktop_content)
+            subprocess.run(["update-desktop-database", str(desktop_dir)], check=False)
+        except Exception:
+            pass
+
+RAISE_PREFIX = '\x01RAISE '
+
+
+def ipc_paths():
+    """One lock file and one socket file per user, in the runtime directory. The lock is a flock on the file:
+    the kernel drops it the moment the process dies, so a crashed Aurora can never leave a stale 'already running'
+    behind (the old abstract-socket name could be left occupied with no owner)."""
+    d = os.environ.get('XDG_RUNTIME_DIR')
+    if not d or not os.path.isdir(d):
+        d = '/tmp'
+    base = os.path.join(d, 'aurora-%d' % os.getuid())
+    return base + '.lock', base + '.sock'
+
+
+def already_running(files_to_open):
+    """Called by a second launch: ask the running Aurora to show itself and wait for its answer.
+    A silent exit looked exactly like "Aurora does not start", so say what happened."""
+    sock_path = ipc_paths()[1]
+    reply_name = 'aurora_reply_%d' % os.getpid()
+    reply = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    reply.bind('\0' + reply_name)
+    reply.settimeout(2.0)
+    out = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    try:
+        out.sendto((RAISE_PREFIX + reply_name).encode('utf-8'), sock_path)
+        for f in files_to_open:
+            if os.path.exists(f):
+                out.sendto(f.encode('utf-8'), sock_path)
+        reply.recvfrom(64)
+    except (socket.timeout, OSError):
+        print("Aurora is already running but does not answer: that copy is stuck.\n"
+              "Close it with:  pkill -f aurora   and start Aurora again.", file=sys.stderr)
+        return 1
+    print("Aurora is already running: brought to the front.", file=sys.stderr)
+    return 0
+
+
+def main():
+    os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
+    
+    setup_desktop_integration()
+    
+    files_to_open = sys.argv[1:]
+    
+    lock_path, sock_path = ipc_paths()
+    global _LOCK_FILE
+    _LOCK_FILE = open(lock_path, 'a')              # kept open for the whole life of the process
+    try:
+        fcntl.flock(_LOCK_FILE, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:                                # a live Aurora of this user holds the lock
+        sys.exit(already_running(files_to_open))
+    lock_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    try:
+        os.unlink(sock_path)                       # an old socket file from a crashed run
+    except FileNotFoundError:
+        pass
+    lock_socket.bind(sock_path)
+    os.chmod(sock_path, 0o600)
+
+    app = QApplication(sys.argv)
+    app.setDesktopFileName("aurora")
+    app.setStyle("Fusion") 
+    
+    icon_path = os.path.join(Path.home(), ".aurora", "icon.svg")
+    icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon.fromTheme("vv-aurora")   # the system icon
+    if not icon.isNull():
+        app.setWindowIcon(icon)
+    
+    win = Aurora()
+    
+    win.setup_ipc(lock_socket)
+    
+    if files_to_open:
+        for f in files_to_open:
+            if os.path.exists(f):
+                win.open_external_file(f)
+    
+    win.show()
+    sys.exit(app.exec())
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""
+VaeVictis Panic - cut the network and power the machine off, right now.
+
+This window runs as your normal user. The only privileged step is
+/usr/local/libexec/vv-panic-action, started with "sudo -n": a sudoers rule allows exactly
+that one program, with no arguments and no password.
+"""
+import subprocess
+
+import gi
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")      # without this Python loads Gdk 4.0 and the import fails
+from gi.repository import Gdk, GLib, Gtk
+
+HELPER = "/usr/local/libexec/vv-panic-action"
+SUDO_CMD = ["sudo", "-n"]
+
+CSS = b"""
+window.vvp { background-color: #0a0a0a; border: 2px solid #b71c1c; border-radius: 12px; }
+.vvp label#title { color: #ff5252; font-family: monospace; font-weight: bold; font-size: 26px;
+                   text-shadow: 0px 0px 10px #b71c1c; }
+.vvp label#subtitle { color: #cccccc; font-family: sans-serif; font-size: 13px; }
+.vvp label#note { color: #707075; font-family: sans-serif; font-size: 11px; }
+.vvp label#error { color: #ffb347; font-family: sans-serif; font-size: 12px; }
+.vvp button.panic-btn {
+    background-image: none; background-color: #b71c1c; color: white; font-weight: 900; font-size: 22px;
+    border-radius: 8px; border: 1px solid #ff5252; padding: 16px; transition: all 200ms ease;
+}
+.vvp button.panic-btn:hover { background-color: #d32f2f; box-shadow: 0px 0px 15px #ff5252; }
+.vvp button.panic-btn:active { background-color: #f44336; }
+.vvp button.panic-btn:disabled { background-color: #4a1010; color: #888888; box-shadow: none; }
+.vvp button.safe-btn {
+    background-image: none; background-color: #1f1f1f; color: #888888; border: 1px solid #333333;
+    border-radius: 8px; padding: 8px;
+}
+.vvp button.safe-btn:hover { background-color: #2a2a2a; color: #ffffff; }
+"""
+
+
+class PanicWindow(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="VaeVictis Panic")
+        self.get_style_context().add_class("vvp")
+        self.set_icon_name("vv-panic")
+        self.set_default_size(470, 300)
+        self.set_position(Gtk.WindowPosition.CENTER_ALWAYS)
+        self.set_decorated(False)             # no title bar, no close button
+        self.set_keep_above(True)
+        self.set_skip_taskbar_hint(True)
+        self.proc = None
+
+        prov = Gtk.CssProvider()
+        prov.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        for side in ("top", "bottom"):
+            getattr(box, f"set_margin_{side}")(24)
+        for side in ("start", "end"):
+            getattr(box, f"set_margin_{side}")(35)
+        self.add(box)
+
+        title = Gtk.Label(label="PANIC MODE")
+        title.set_name("title")
+        box.pack_start(title, False, False, 0)
+
+        desc = Gtk.Label(label="This cuts every network connection, flushes the disks and\n"
+                               "powers the machine off immediately.\n\n"
+                               "It cannot be undone and nothing is asked twice.")
+        desc.set_name("subtitle")
+        desc.set_justify(Gtk.Justification.CENTER)
+        box.pack_start(desc, False, False, 6)
+
+        note = Gtk.Label(label="Not a secure erase: RAM fades after power-off, it is not wiped.")
+        note.set_name("note")
+        box.pack_start(note, False, False, 0)
+
+        self.btn_panic = Gtk.Button(label="INITIATE PANIC")
+        self.btn_panic.get_style_context().add_class("panic-btn")
+        self.btn_panic.connect("clicked", self.on_panic)
+        box.pack_start(self.btn_panic, True, True, 4)
+
+        self.lbl_error = Gtk.Label(label="")
+        self.lbl_error.set_name("error")
+        self.lbl_error.set_line_wrap(True)
+        self.lbl_error.set_no_show_all(True)
+        box.pack_start(self.lbl_error, False, False, 0)
+
+        cancel = Gtk.Button(label="Safe Abort  (Esc)")
+        cancel.get_style_context().add_class("safe-btn")
+        cancel.connect("clicked", lambda *_: self.destroy())
+        box.pack_start(cancel, False, False, 0)
+
+        self.connect("key-press-event", self.on_key)
+
+    def on_key(self, _w, event):
+        if event.keyval == Gdk.KEY_Escape:
+            self.destroy()
+            return True
+        return False
+
+    def on_panic(self, _btn):
+        self.btn_panic.set_sensitive(False)
+        try:
+            self.proc = subprocess.Popen(SUDO_CMD + [HELPER])
+        except OSError as e:
+            self.show_error(f"Cannot start the panic helper: {e.strerror or e}")
+            return
+        GLib.timeout_add(1500, self.check_started)
+
+    def check_started(self):
+        rc = self.proc.poll() if self.proc else None
+        if rc not in (None, 0):          # still running (or already powering off) is the normal case
+            self.show_error(f"The panic helper failed (exit code {rc}). "
+                            "Is the sudoers rule /etc/sudoers.d/99-vv-panic installed?")
+        return False
+
+    def show_error(self, text):
+        self.lbl_error.set_text(text)
+        self.lbl_error.set_visible(True)
+        self.btn_panic.set_sensitive(True)
+
+
+if __name__ == "__main__":
+    GLib.set_prgname("vv-panic")
+    GLib.set_application_name("VaeVictis Panic")
+    Gtk.Window.set_default_icon_name("vv-panic")
+    win = PanicWindow()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    win.lbl_error.hide()
+    Gtk.main()

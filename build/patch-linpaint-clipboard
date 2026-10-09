@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""
+patch-linpaint-clipboard - make Linpaint's Copy and Paste really use the clipboard
+
+Problem in LinPaint+ 2.3: "Copy" calls Image.show(), which opens the picture in an external viewer and then says
+"Image copied". "Paste" crashes when Pillow has no clipboard helper and ignores copied files.
+
+After the patch:
+  Copy   puts the image on the system clipboard as PNG (wl-copy on Wayland, xclip on X11) and says so in the status bar
+  Paste  reads an image or a copied image file from the clipboard and tells you if there is nothing to paste
+
+Usage:   python3 patch-linpaint-clipboard [path/to/linpaint.py]      (default: ./Linpaint/linpaint.py)
+A copy of the original is kept next to it as linpaint.py.before-clipboard. Running it twice is harmless.
+"""
+import os
+import shutil
+import sys
+
+START = "    def copy_to_clipboard(self):\n"
+END = "    def cancel_operation(self):\n"
+MARK = "# CLIPBOARD-PATCH"
+
+NEW = '''    def _wayland(self):
+        return (os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+                or bool(os.environ.get("WAYLAND_DISPLAY")))
+
+    def copy_to_clipboard(self):  # CLIPBOARD-PATCH
+        """Put the image on the system clipboard as PNG (wl-copy on Wayland, xclip on X11)."""
+        import io
+        buf = io.BytesIO()
+        self.img.save(buf, "PNG")
+        data = buf.getvalue()
+        cmds = []
+        if self._wayland() and shutil.which("wl-copy"):
+            cmds.append(["wl-copy", "--type", "image/png"])
+        if shutil.which("xclip"):
+            cmds.append(["xclip", "-selection", "clipboard", "-t", "image/png"])
+        if not self._wayland() and shutil.which("wl-copy"):
+            cmds.append(["wl-copy", "--type", "image/png"])
+        for cmd in cmds:
+            try:
+                subprocess.run(cmd, input=data, check=True, timeout=10,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                continue
+            self.status.config(text="✓ Image copied to the clipboard")
+            return
+        messagebox.showwarning(
+            APP_NAME, "Cannot copy the image.\\n\\nInstall wl-clipboard (Wayland) or xclip (X11).")
+
+    def paste_from_clipboard(self):
+        try:
+            from PIL import ImageGrab
+            img = ImageGrab.grabclipboard()
+        except ImportError:
+            messagebox.showwarning(APP_NAME, "Install full Pillow for clipboard")
+            return
+        except Exception as e:  # on Linux Pillow needs wl-paste or xclip
+            messagebox.showwarning(
+                APP_NAME,
+                f"Cannot read the clipboard:\\n{e}\\n\\nInstall wl-clipboard (Wayland) or xclip (X11).")
+            return
+        if isinstance(img, list):  # a copied file: use the first one that opens as an image
+            opened = None
+            for p in img:
+                try:
+                    opened = Image.open(p)
+                    opened.load()
+                    break
+                except Exception:
+                    opened = None
+            img = opened
+        if img is None:
+            self.status.config(text="Nothing to paste: the clipboard has no image")
+            return
+        self.push_undo()
+        self.img = img.convert("RGB")
+        self.refresh()
+        self.status.config(text="✓ Pasted from the clipboard")
+
+'''
+
+
+def main():
+    path = sys.argv[1] if len(sys.argv) > 1 else os.path.join("Linpaint", "linpaint.py")
+    if not os.path.isfile(path):
+        sys.exit(f"patch-linpaint-clipboard: file not found: {path}")
+    src = open(path, encoding="utf-8").read()
+    if MARK in src:
+        print("already patched: nothing to do")
+        return
+    if src.count(START) != 1 or src.count(END) != 1 or src.index(START) > src.index(END):
+        sys.exit("patch-linpaint-clipboard: the file is not the LinPaint+ 2.3 layout this patch expects; nothing changed")
+    a, b = src.index(START), src.index(END)
+    old = src[a:b]
+    if "self.img.show()" not in old:
+        sys.exit("patch-linpaint-clipboard: the Copy function is not the expected one; nothing changed")
+    shutil.copy2(path, path + ".before-clipboard")
+    open(path, "w", encoding="utf-8").write(src[:a] + NEW + src[b:])
+    compile(open(path, encoding="utf-8").read(), path, "exec")
+    print(f"patched: {path}   (original kept as {path}.before-clipboard)")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,39 @@
+#!/bin/bash
+# hids-notify - desktop popups for the VaeVictis HIDS.
+#
+# The HIDS daemon runs as root and only writes /var/log/hids.log. This script runs inside YOUR desktop session, with
+# YOUR rights (started by /etc/xdg/autostart/hids-notify.desktop), reads that log and shows a popup for every alert.
+# Nothing here is privileged: the daemon never has to switch user or reach into your session.
+#
+#   [CRITICAL] alerts (accounts, sudo, boot files, services, new SETUID files, the watcher stopped): urgent popup, always
+#   other alerts: normal popup, at most one every 5 seconds (the log still has all of them)
+set -u
+LOG="${HIDS_LOG:-/var/log/hids.log}"
+command -v notify-send >/dev/null 2>&1 || exit 0
+
+esc() { local t=$1; t=${t//&/"&amp;"}; t=${t//</"&lt;"}; t=${t//>/"&gt;"}; printf '%s' "$t"; }   # quoted: in bash 5.2 an unquoted & means "the match"
+notify() { notify-send -a "VaeVictis HIDS" -u "$1" -i "$2" -- "$3" "$(esc "$4")" >/dev/null 2>&1 || true; }
+
+# the log may not exist yet (the daemon creates it): wait for it, at most a minute
+for _ in $(seq 1 60); do [ -r "$LOG" ] && break; sleep 1; done
+[ -r "$LOG" ] || exit 0
+
+# alerts raised since the daemon last started: they may have happened before you logged in
+n=$(awk '/INFO started/ { n = 0 } /ALERT/ { n++ } END { print n + 0 }' "$LOG" 2>/dev/null)
+if [ "${n:-0}" -gt 0 ]; then
+    notify critical dialog-warning "HIDS: $n alert(s) since the system started" "Open HIDS Security to read them."
+fi
+
+last=0
+tail -n 0 -F -- "$LOG" 2>/dev/null | while IFS= read -r line; do
+    case $line in
+        *"ALERT [CRITICAL] "*)
+            notify critical dialog-error "HIDS: CRITICAL change" "${line#*"ALERT [CRITICAL] "}" ;;
+        *"ALERT "*)
+            now=$(printf '%(%s)T' -1)
+            if [ $((now - last)) -ge 5 ]; then
+                notify normal dialog-warning "HIDS: a protected file changed" "${line#*"ALERT "}"
+                last=$now
+            fi ;;
+    esac
+done
