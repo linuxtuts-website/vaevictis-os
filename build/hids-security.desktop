@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=HIDS Security
+Comment=Host intrusion detection: watches the system programs and key account files
+Exec=/usr/local/bin/hids-gui
+Icon=hids
+Terminal=false
+Categories=System;Security;
+StartupWMClass=hids-gui

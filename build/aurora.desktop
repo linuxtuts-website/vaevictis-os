@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Aurora
+Comment=Privacy-focused Music Player
+Exec=/usr/local/bin/aurora
+Icon=vv-aurora
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Player;Security;

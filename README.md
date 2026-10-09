@@ -54,7 +54,7 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
   `.conf` (tested with ProtonVPN files).
 - **Tools:** KeePassXC (offline password manager), mat2 (metadata cleaner), Panic Mode (cut the network and power off), Lynis,
   uBlock Origin preinstalled in Firefox ESR, an optional NVIDIA proprietary driver installer (`vv-nvidia`).
-- **Simple desktop apps for people coming from Windows or macOS**, so you do not need to learn heavyweight tools on day one: **Aurora** (music player), **LinPaint+** (a Paint-style editor that also takes screenshots you can edit right away), **VaeVictis PDF** (`vv-pdf`: PDF viewer and page editor) and **VaeVictis XML** (`vv-xml`: small XML editor). Aurora, `vv-pdf` and `vv-xml` use no network at all.
+- **Simple desktop apps for people coming from Windows or macOS**, so you do not need to learn heavyweight tools on day one: **Aurora** (music player), **LinPaint+** (a Paint-style editor that also takes screenshots you can edit right away) and **VaeVictis PDF** (`vv-pdf`: PDF viewer and page editor), next to LibreOffice for documents. Aurora and `vv-pdf` use no network at all.
 - **Snapshots without Timeshift** (`v-snap`): a small menu-driven tool using rsync and hard links. It takes a snapshot of the whole
   system (without `/home`) or backs up any folder, keeps the snapshots on the system disk or on an external disk or USB stick, and only
   changed files use new space. List, restore and delete from the same menu. Run it with `sudo v-snap`.
