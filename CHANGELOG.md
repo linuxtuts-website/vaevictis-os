@@ -1,5 +1,15 @@
 # Changelog
 
+## Aurora 1.1.0 (2026-10-10)
+
+A release of its own (`aurora-v1.1.0`): the first VaeVictis program shipped as a Debian package (`vaevictis-aurora`). It is
+**not** in the 1.0 ISO, which carries the first version of Aurora.
+- The spectrum analyses the audio that is playing (it used random numbers before): full-width strip, 64 bands, frequency
+  read-out when you hover a bar.
+- Sharper text (real bold instead of weight 600, better contrast).
+- `QT_QPA_PLATFORM` can be set from the shell (for example `xcb`) to test X11.
+- `.deb` built from the repository with `packaging/aurora/build.sh`; it replaces a hand-copied `/usr/local/bin/aurora`.
+
 ## 1.0 (2026-10-09)
 
 First public release. Debian 13 (trixie), kernel 6.12, GNOME. Hybrid BIOS + UEFI live ISO (Secure Boot not supported).

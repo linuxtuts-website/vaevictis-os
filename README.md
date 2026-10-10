@@ -67,6 +67,14 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
   changed files use new space. List, restore and delete from the same menu. Run it with `sudo v-snap`.
 - The **Welcome window** shows these settings read live from the running system, so you do not have to trust this page.
 
+## Updating
+
+Debian packages update with `apt`; security updates are installed automatically. You do not need a new ISO for that.
+The VaeVictis programs are being packaged as `.deb` files one at a time, so that they can be updated the same way. The first is
+**Aurora 1.1.0** (real spectrum, sharper text): see the [`aurora-v1.1.0` release](https://github.com/linuxtuts-website/vaevictis-os/releases/tag/aurora-v1.1.0). If you installed 1.0, one command
+replaces your copy: `sudo apt install ./vaevictis-aurora_1.1.0_all.deb`. How it works and how to check the file:
+[docs/UPDATING.md](docs/UPDATING.md).
+
 ## What it does NOT do
 
 - It is **not an anonymity system** like Tails: no Tor, your provider sees your traffic unless you use a VPN you trust.
