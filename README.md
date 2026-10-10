@@ -70,9 +70,11 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
 ## Updating
 
 Debian packages update with `apt`; security updates are installed automatically. You do not need a new ISO for that.
-The VaeVictis programs are being packaged as `.deb` files one at a time, so that they can be updated the same way. The first is
-**Aurora 1.1.0** (real spectrum, sharper text): see the [`aurora-v1.1.0` release](https://github.com/linuxtuts-website/vaevictis-os/releases/tag/aurora-v1.1.0). If you installed 1.0, one command
-replaces your copy: `sudo apt install ./vaevictis-aurora_1.1.0_all.deb`. How it works and how to check the file:
+The VaeVictis programs are being packaged as `.deb` files one at a time and published in a **signed APT repository**,
+<https://apt.linuxtuts.online/>, so that `apt upgrade` can update them too. You add it yourself, on purpose, after checking
+the fingerprint of its key (`0A41 158C 1DD6 718D 3D3F  FED0 6848 6B39 B2A9 9993`). The first package is **Aurora 1.1.0** (real
+spectrum, sharper text). The exact commands, what you are trusting, and how to install a single `.deb` from the
+[`aurora-v1.1.0` release](https://github.com/linuxtuts-website/vaevictis-os/releases/tag/aurora-v1.1.0) instead:
 [docs/UPDATING.md](docs/UPDATING.md).
 
 ## What it does NOT do

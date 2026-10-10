@@ -1,5 +1,15 @@
 # Changelog
 
+## APT repository (2026-10-10)
+
+A signed APT repository at <https://apt.linuxtuts.online/> (files: [`vaevictis-apt`](https://github.com/linuxtuts-website/vaevictis-apt)),
+so that `apt upgrade` can update the VaeVictis programs. It is not enabled by default: you add it yourself.
+- Holds `vaevictis-aurora` 1.1.0, byte for byte the file of the `aurora-v1.1.0` release (same SHA-256).
+- Index files signed with an ed25519 key, fingerprint `0A41 158C 1DD6 718D 3D3F  FED0 6848 6B39 B2A9 9993`. The private key stays on
+  the author's encrypted disk, not on any server. Checked with `apt` on Debian 13: valid signature accepted, altered index or
+  signature rejected.
+- Hosted on GitHub Pages; a published package version is never changed.
+
 ## Aurora 1.1.0 (2026-10-10)
 
 A release of its own (`aurora-v1.1.0`): the first VaeVictis program shipped as a Debian package (`vaevictis-aurora`). It is
