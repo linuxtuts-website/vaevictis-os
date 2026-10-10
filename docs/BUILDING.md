@@ -26,6 +26,7 @@ Go is installed inside the chroot only for the build of HIDS and purged afterwar
    - `./vv-branding`: icons, Welcome window, login screen, GRUB theme, system identity
    - `./vv-hids`: builds the HIDS inside the chroot and installs it with its dashboard, popups and service
    - the VPN manager (`inject-vv-vpn.sh`), `vv-nvidia` (optional driver script), the installer (`vaevictis_install.sh`)
+   - the custom desktop applications (Aurora, LinPaint+, VaeVictis PDF): see [below](#custom-desktop-applications)
 4. **Replace the personal user with the live user.** `./vv-liveuser` shows the plan, `./vv-liveuser --apply` does it.
 5. **Seal the chroot.** `./vv-chroot seal` removes machine-id, SSH host keys, shell history, logs and other leftovers.
 6. **Build.** `./vv-iso build --release` (xz, smaller; refuses an unsealed chroot). Faster test build: `./vv-iso build`.
@@ -36,6 +37,25 @@ Go is installed inside the chroot only for the build of HIDS and purged afterwar
 9. **Release.** `./vv-release VERSION [--sign]` refuses to continue if anything personal is still in the chroot, then writes
    `release/VERSION/` with the ISO, `SHA256SUMS` (+ GPG signature with `--sign`), CycloneDX SBOM, `PACKAGES.txt`, `SOURCES.txt`,
    `grub.cfg.txt` (the exact boot options) and `BUILD-INFO.txt`.
+
+## Custom desktop applications
+
+Aurora (music player), LinPaint+ (image editor and screenshot tool) and VaeVictis PDF (`vv-pdf`) are single Python programs
+kept in `build/`. They are **not installed by a script yet**: in the image they were copied into the chroot by hand, and this is
+the exact result you must reproduce (as root, with the chroot's paths):
+
+| What | Where in the image | Mode |
+|---|---|---|
+| the program | `/usr/local/bin/aurora`, `/usr/local/bin/linpaint`, `/usr/local/bin/vv-pdf` | `755` |
+| the menu launchers | `/usr/share/applications/aurora.desktop`, `linpaint.desktop`, `vv-pdf.desktop` (and `vaevictis_install.desktop` for the installer) | `644` |
+| the icons | `vv-aurora.svg`, `vv-linpaint.svg`, `vv-pdf.svg` in the `hicolor` icon theme (`/usr/share/icons/hicolor/`) | `644` |
+
+The first line of each program is its interpreter (`#!/usr/bin/env python3`), so the file is copied under the command name
+without the `.py` extension. The libraries each program needs are the `import` lines at the top of the file; install the matching
+Debian packages in the chroot (for example `vv-pdf` uses PyMuPDF and PyQt6). Aurora and `vv-pdf` open no network connection at all.
+After copying, run `./vv-chroot audit` again and, in the test VM, open each program once from the menu.
+
+Scripting this step is on the to-do list.
 
 ## Writing the image to a USB stick
 
