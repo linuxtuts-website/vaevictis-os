@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Aurora
+Comment=Music player
+Exec=aurora %F
+Icon=vv-aurora
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;audio;player;spectrum;

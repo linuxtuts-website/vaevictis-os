@@ -1,0 +1,10 @@
+vaevictis-aurora (1.1.0) unstable; urgency=low
+
+  * The spectrum now analyses the audio that is playing (it used random
+    numbers before). It is a full-width strip above the player bar, with a
+    frequency read-out when you hover a bar.
+  * Sharper text: real bold instead of weight 600, better contrast.
+  * QT_QPA_PLATFORM can be set from the shell (for example xcb) to test X11.
+  * First release as a .deb: it replaces a hand-copied /usr/local/bin/aurora.
+
+ -- linuxtuts-website <292920559+linuxtuts-website@users.noreply.github.com>  Sat, 10 Oct 2026 13:30:00 +0200

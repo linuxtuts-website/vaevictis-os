@@ -7,6 +7,10 @@ import sys
 import os
 import sqlite3
 import random
+import array
+import cmath
+import math
+import time
 import socket
 import fcntl
 import subprocess
@@ -20,14 +24,20 @@ from PyQt6.QtWidgets import (
     QInputDialog, QMessageBox, QGroupBox, QTableWidget, QTableWidgetItem,
     QAbstractItemView, QHeaderView
 )
-from PyQt6.QtCore import Qt, QTimer, QSize, QSocketNotifier
-from PyQt6.QtGui import QAction, QIcon, QColor, QKeySequence, QShortcut, QPainter, QBrush
+from PyQt6.QtCore import Qt, QTimer, QSize, QSocketNotifier, QRectF
+from PyQt6.QtGui import QAction, QIcon, QColor, QKeySequence, QShortcut, QPainter, QBrush, QLinearGradient
 
 try:
-    from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+    from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QAudioFormat
     USE_QT = True
 except ImportError:
     USE_QT = False
+
+try:                                   # the spectrum reads the decoded audio: Qt 6.8 or newer
+    from PyQt6.QtMultimedia import QAudioBufferOutput
+    HAS_AUDIO_TAP = True
+except ImportError:
+    HAS_AUDIO_TAP = False
 
 import mutagen
 
@@ -35,7 +45,6 @@ STYLESHEET = """
 QMainWindow, QWidget {
     background-color: #0b0b0e;
     color: #e2e2e5;
-    font-family: system-ui, sans-serif;
 }
 QSplitter::handle {
     background-color: #0b0b0e;
@@ -55,7 +64,7 @@ QListWidget::item {
 QListWidget::item:selected {
     background-color: #1c1c22;
     color: #ffffff;
-    font-weight: 600;
+    font-weight: bold;
 }
 QListWidget::item:hover:!selected {
     background-color: #15151a;
@@ -70,10 +79,10 @@ QTableWidget::item:selected {
 }
 QHeaderView::section {
     background-color: #0b0b0e;
-    color: #707075;
+    color: #8c8c95;
     border: none;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: bold;
     text-transform: uppercase;
     padding: 8px 5px;
     text-align: left;
@@ -84,7 +93,7 @@ QPushButton {
     border: none;
     border-radius: 8px;
     padding: 8px;
-    font-weight: 600;
+    font-weight: bold;
     font-size: 13px;
 }
 QPushButton:hover {
@@ -106,8 +115,8 @@ QLineEdit {
 QGroupBox {
     border: none;
     margin-top: 20px;
-    font-weight: 600;
-    color: #707075;
+    font-weight: bold;
+    color: #8c8c95;
     font-size: 12px;
     letter-spacing: 1px;
 }
@@ -161,60 +170,286 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
 """
 
 class SpectrumAnalyzer(QWidget):
+    """A real spectrum of the audio that is playing (no random numbers).
+
+    The player hands over the decoded audio (QAudioBufferOutput). A small FFT written in plain
+    Python turns the moment that is playing now into bars: low notes on the left, high on the right.
+    Hover a bar to read its frequency. Everything stays inside this program: nothing is sent anywhere.
+    """
+    NUM_BARS = 64
+    FFT_N = 1024                 # 23 ms of audio per picture
+    F_LOW, F_HIGH = 45.0, 16000.0
+    RANGE_DB = 46.0              # how far below the loudest band a bar still shows
+    TICK_MS = 33                 # about 30 pictures per second
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(120)
-        self.num_bars = 45
-        self.values = [0.0] * self.num_bars
-        self.targets = [0.0] * self.num_bars
+        self.setFixedHeight(104)
+        self.setMouseTracking(True)
+        n = self.num_bars = self.NUM_BARS
+        self.values = [0.0] * n
+        self.peaks = [0.0] * n
+        self._hold = [0] * n
+        self.hover = -1
         self.is_playing = False
-        
+        self.available = True
+        self._clock = None                     # function returning (position in ms, playback rate)
+        self._buf = array.array('f')           # the last second or so of the audio, mixed to mono
+        self._buf_t0 = 0.0                     # microseconds: time of the first sample in _buf
+        self._buf_rate = 0
+        self._last_pos = None
+        self._last_t = 0.0
+        self._ref_db = -40.0                   # level of the loudest band lately; follows the music
+        self._bands_for_rate = None
+        self._bands = []
+        ratio = (self.F_HIGH / self.F_LOW) ** (1.0 / n)
+        self._edges = [self.F_LOW * ratio ** i for i in range(n + 1)]
+        self._centers = [math.sqrt(self._edges[i] * self._edges[i + 1]) for i in range(n)]
+        self._prepare_fft()
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self._animate)
-        self.timer.start(50)
+        self.timer.setInterval(self.TICK_MS)
+        self.timer.timeout.connect(self._tick)
+
+    # ---- connections made by the player window -------------------------------------------------
+    def set_clock(self, fn):
+        self._clock = fn
+
+    def set_available(self, ok):
+        self.available = ok
+        self.update()
 
     def set_playing(self, state):
         self.is_playing = state
-        if not state:
-            self.targets = [0.0] * self.num_bars
+        if state:
+            self._last_pos = None
+            self.timer.start()
+        elif not any(self.values) and not any(self.peaks):
+            self.timer.stop()
 
-    def _animate(self):
-        if self.is_playing:
-            for i in range(self.num_bars):
-                if random.random() > 0.7:
-                    multiplier = 1.0 - abs((i - self.num_bars/2) / (self.num_bars/2))
-                    self.targets[i] = random.uniform(0.1, 1.0) * (0.4 + 0.6 * multiplier)
-        
-        needs_update = False
+    def clear(self):
+        del self._buf[:]
+        self._buf_rate = 0
+
+    def feed(self, buf):
+        """Receives each piece of decoded audio from the player and keeps the latest ones."""
+        try:
+            fmt = buf.format()
+            sf, ch, rate = fmt.sampleFormat(), fmt.channelCount(), fmt.sampleRate()
+            nbytes = buf.byteCount()
+            if ch < 1 or rate <= 0 or nbytes <= 0:
+                return
+            raw = buf.constData().asstring(nbytes)
+            start_us = buf.startTime()
+        except Exception:
+            return
+        SF = QAudioFormat.SampleFormat
+        if sf == SF.Int16:
+            code, scale, offset = 'h', 32768.0, 0.0
+        elif sf == SF.Float:
+            code, scale, offset = 'f', 1.0, 0.0
+        elif sf == SF.Int32:
+            code, scale, offset = 'i', 2147483648.0, 0.0
+        elif sf == SF.UInt8:
+            code, scale, offset = 'B', 128.0, 128.0
+        else:
+            return
+        arr = array.array(code)
+        if arr.itemsize != {'h': 2, 'f': 4, 'i': 4, 'B': 1}[code]:
+            return
+        raw = raw[:len(raw) - len(raw) % (arr.itemsize * ch)]
+        arr.frombytes(raw)
+        if not arr:
+            return
+        k = 1.0 / scale
+        if ch == 1:
+            mono = [(v - offset) * k for v in arr]
+        else:
+            mono = [((a - offset) + (b - offset)) * 0.5 * k for a, b in zip(arr[0::ch], arr[1::ch])]
+        buf = self._buf
+        expected = self._buf_t0 + len(buf) / rate * 1e6 if self._buf_rate else 0.0
+        if rate != self._buf_rate or not buf or (start_us >= 0 and abs(start_us - expected) > 30000):
+            del buf[:]                                       # new track, a seek, or a different format
+            self._buf_rate = rate
+            self._buf_t0 = float(start_us if start_us >= 0 else 0)
+        buf.extend(mono)
+        cut = len(buf) - int(rate * 1.5)                     # keep about 1.5 s
+        if cut > 0:
+            del buf[:cut]
+            self._buf_t0 += cut / rate * 1e6
+
+    # ---- the maths ----------------------------------------------------------------------------
+    def _prepare_fft(self):
+        n = self.FFT_N
+        m = n // 2
+        bits = m.bit_length() - 1
+        self._window = [0.5 - 0.5 * math.cos(2.0 * math.pi * i / (n - 1)) for i in range(n)]
+        self._rev = [int(format(i, '0%db' % bits)[::-1], 2) for i in range(m)]
+        self._tw = [cmath.exp(-2j * math.pi * k / m) for k in range(m // 2)]
+        self._rtw = [cmath.exp(-2j * math.pi * k / n) for k in range(m)]
+
+    def _magnitudes(self, x):
+        """Size-N FFT of a real signal using one complex FFT of size N/2. Returns N/2+1 magnitudes."""
+        m = self.FFT_N // 2
+        z = list(map(complex, x[0::2], x[1::2]))
+        z = [z[r] for r in self._rev]
+        tw = self._tw
+        size = 2
+        while size <= m:
+            half = size >> 1
+            step = m // size
+            for start in range(0, m, size):
+                k = 0
+                for j in range(start, start + half):
+                    t = z[j + half] * tw[k]
+                    u = z[j]
+                    z[j] = u + t
+                    z[j + half] = u - t
+                    k += step
+            size <<= 1
+        out = []
+        rtw = self._rtw
+        for k in range(m):
+            zk = z[k]
+            zc = z[(m - k) % m].conjugate()
+            even = (zk + zc) * 0.5
+            odd = (zk - zc) * (-0.5j)
+            out.append(abs(even + rtw[k] * odd))
+        zk = z[0]
+        out.append(abs((zk + zk.conjugate()) * 0.5 - (zk - zk.conjugate()) * (-0.5j)))   # the Nyquist bin
+        return out
+
+    def _make_bands(self, rate):
+        binw = rate / self.FFT_N
+        top = self.FFT_N // 2
+        bands = []
         for i in range(self.num_bars):
-            diff = self.targets[i] - self.values[i]
-            if abs(diff) > 0.01:
-                self.values[i] += diff * 0.3
-                needs_update = True
-                
-        if needs_update or self.is_playing:
+            k0 = min(self._edges[i] / binw, top)
+            k1 = min(self._edges[i + 1] / binw, top)
+            tilt = max(0.0, 2.5 * math.log2(self._centers[i] / 80.0))   # highs are quieter in music
+            bands.append((k0, k1, tilt))
+        self._bands, self._bands_for_rate = bands, rate
+
+    def _levels(self, mags):
+        norm = self.FFT_N / 4.0                                  # a full-scale sine reads 1.0
+        out = []
+        for k0, k1, tilt in self._bands:
+            if k1 - k0 < 1.0:                                    # narrow band: read between two bins
+                c = (k0 + k1) / 2.0
+                i = int(c)
+                f = c - i
+                mag = mags[i] * (1.0 - f) + mags[min(i + 1, len(mags) - 1)] * f
+            else:
+                mag = max(mags[int(k0):int(k1) + 1])
+            out.append(20.0 * math.log10(mag / norm + 1e-9) + tilt)
+        return out
+
+    def _position_us(self):
+        """Playback position, smoothed between the player's updates (which come only every ~50 ms)."""
+        pos, rate = self._clock()
+        now = time.monotonic()
+        if pos != self._last_pos:
+            self._last_pos, self._last_t = pos, now
+        return (pos + min(now - self._last_t, 0.12) * 1000.0 * rate) * 1000.0
+
+    def _analyse(self):
+        n = self.FFT_N
+        rate = self._buf_rate
+        if self._clock is None or rate <= 0 or len(self._buf) < n:
+            return None
+        pos_us = self._position_us()
+        first = int((pos_us - self._buf_t0) / 1e6 * rate) - n // 2
+        last_start = len(self._buf) - n
+        slack = int(0.4 * rate)
+        if first < -slack or first > last_start + slack:         # nothing recent: seek, or a gap
+            return None
+        first = max(0, min(first, last_start))
+        x = [v * w for v, w in zip(self._buf[first:first + n], self._window)]
+        if rate != self._bands_for_rate:
+            self._make_bands(rate)
+        return self._levels(self._magnitudes(x))
+
+    # ---- animation and drawing ----------------------------------------------------------------
+    def _tick(self):
+        if not self.isVisible():
+            return
+        targets = [0.0] * self.num_bars
+        if self.is_playing:
+            try:
+                levels = self._analyse()
+            except Exception:
+                levels = None
+            if levels:
+                loud = max(levels)
+                self._ref_db = max(loud, self._ref_db - 0.06, -40.0)     # follows loud and quiet tracks
+                low = self._ref_db - self.RANGE_DB
+                targets = [min(1.0, max(0.0, (v - low) / self.RANGE_DB)) for v in levels]
+        busy = False
+        for i, t in enumerate(targets):
+            v = self.values[i]
+            v = v + (t - v) * 0.7 if t > v else max(t, v - 0.045)       # quick rise, slow fall
+            self.values[i] = v
+            if v >= self.peaks[i]:
+                self.peaks[i], self._hold[i] = v, 16
+            elif self._hold[i] > 0:
+                self._hold[i] -= 1
+            else:
+                self.peaks[i] = max(0.0, self.peaks[i] - 0.012)
+            if v > 0.003 or self.peaks[i] > 0.003:
+                busy = True
+        self.update()
+        if not self.is_playing and not busy:
+            self.timer.stop()
+
+    def _bar_at(self, x):
+        return max(0, min(self.num_bars - 1, int(x / max(1.0, self.width() / self.num_bars))))
+
+    def mouseMoveEvent(self, event):
+        i = self._bar_at(event.position().x())
+        if i != self.hover:
+            self.hover = i
             self.update()
 
+    def leaveEvent(self, event):
+        self.hover = -1
+        self.update()
+
     def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        w = self.width()
-        h = self.height()
-        bar_w = w / self.num_bars
-        padding = max(1, bar_w * 0.2)
-        actual_w = bar_w - padding
-        
-        painter.setPen(Qt.PenStyle.NoPen)
-        for i in range(self.num_bars):
-            bar_h = self.values[i] * h * 0.8
-            x = i * bar_w + padding / 2
-            y = h - bar_h
-            
-            intensity = int(100 + 155 * self.values[i])
-            color = QColor(intensity, intensity, intensity, 220)
-            painter.setBrush(QBrush(color))
-            painter.drawRoundedRect(int(x), int(y), int(actual_w), int(bar_h), 2, 2)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        n = self.num_bars
+        slot = w / n
+        gap = max(2.0, slot * 0.24)
+        top_pad = 18
+        usable = max(1, h - top_pad - 2)
+        grad = QLinearGradient(0, h, 0, top_pad)
+        grad.setColorAt(0.0, QColor("#12795a"))
+        grad.setColorAt(1.0, QColor("#2ee6a6"))
+        p.setPen(Qt.PenStyle.NoPen)
+        for i in range(n):
+            x = i * slot + gap / 2
+            bw = slot - gap
+            bh = max(3.0, self.values[i] * usable)
+            y = h - 2 - bh
+            if self.values[i] < 0.01:
+                p.setBrush(QColor("#22222a"))
+            elif i == self.hover:
+                p.setBrush(QColor("#7dffd0"))
+            else:
+                p.setBrush(QBrush(grad))
+            p.drawRoundedRect(QRectF(x, y, bw, bh), 2, 2)
+            if self.peaks[i] > 0.02:                               # the little cap that falls slowly
+                py = h - 2 - self.peaks[i] * usable - 4
+                p.setBrush(QColor("#e2e2e5"))
+                p.drawRoundedRect(QRectF(x, py, bw, 2), 1, 1)
+        if self.hover >= 0:
+            f = self._centers[self.hover]
+            label = "%.1f kHz" % (f / 1000.0) if f >= 1000 else "%d Hz" % round(f)
+            p.setPen(QColor("#9a9aa3"))
+            p.drawText(QRectF(0, 0, w, top_pad), Qt.AlignmentFlag.AlignCenter, label)
+        elif not self.available:
+            p.setPen(QColor("#9a9aa3"))
+            p.drawText(QRectF(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, "Spectrum needs Qt 6.8 or newer")
 
 
 class Aurora(QMainWindow):
@@ -260,6 +495,7 @@ class Aurora(QMainWindow):
         
         self.playlist = []
         self._setup_ui()
+        self._connect_spectrum()
         self._setup_menu()
         self._setup_shortcuts()
         self._load_sidebar()
@@ -302,7 +538,7 @@ class Aurora(QMainWindow):
         
         top_layout = QHBoxLayout()
         hdr = QLabel("AURORA")
-        hdr.setStyleSheet("font-size: 18px; font-weight: 600; letter-spacing: 1px;")
+        hdr.setStyleSheet("font-size: 18px; font-weight: bold; letter-spacing: 1px;")
         top_layout.addWidget(hdr)
         
         top_layout.addStretch()
@@ -322,7 +558,7 @@ class Aurora(QMainWindow):
         sidebar_layout.setContentsMargins(0, 0, 10, 0)
         
         lbl_lib = QLabel("LIBRARY")
-        lbl_lib.setStyleSheet("color: #707075; font-size: 12px; font-weight: 600; margin-left: 10px;")
+        lbl_lib.setStyleSheet("color: #8c8c95; font-size: 12px; font-weight: bold; margin-left: 10px;")
         sidebar_layout.addWidget(lbl_lib)
         
         self.sidebar = QListWidget()
@@ -330,7 +566,7 @@ class Aurora(QMainWindow):
         sidebar_layout.addWidget(self.sidebar)
         
         lbl_pl = QLabel("PLAYLISTS")
-        lbl_pl.setStyleSheet("color: #707075; font-size: 12px; font-weight: 600; margin-left: 10px; margin-top: 15px;")
+        lbl_pl.setStyleSheet("color: #8c8c95; font-size: 12px; font-weight: bold; margin-left: 10px; margin-top: 15px;")
         sidebar_layout.addWidget(lbl_pl)
         
         btn_new_pl = QPushButton("Add Playlist")
@@ -385,11 +621,7 @@ class Aurora(QMainWindow):
         
         right_layout.addWidget(mixer_group)
         
-        spec_group = QGroupBox("SPECTRUM")
-        sl = QVBoxLayout(spec_group)
-        self.visualizer = SpectrumAnalyzer()
-        sl.addWidget(self.visualizer)
-        right_layout.addWidget(spec_group)
+        self.visualizer = SpectrumAnalyzer()          # shown full width above the player bar
         
         split.addWidget(right_panel)
         
@@ -397,6 +629,8 @@ class Aurora(QMainWindow):
         split.setStretchFactor(1, 6)
         split.setStretchFactor(2, 3)
         main_layout.addWidget(split, stretch=1)
+        main_layout.addSpacing(6)
+        main_layout.addWidget(self.visualizer)
         
         main_layout.addSpacing(15)
         
@@ -407,14 +641,14 @@ class Aurora(QMainWindow):
         
         prog_layout = QHBoxLayout()
         self.time_cur = QLabel("0:00")
-        self.time_cur.setStyleSheet("color: #707075; font-size: 12px;")
+        self.time_cur.setStyleSheet("color: #8c8c95; font-size: 12px;")
         
         self.progress = QSlider(Qt.Orientation.Horizontal)
         self.progress.sliderPressed.connect(self._on_slider_pressed)
         self.progress.sliderReleased.connect(self._on_seek)
         
         self.time_tot = QLabel("0:00")
-        self.time_tot.setStyleSheet("color: #707075; font-size: 12px;")
+        self.time_tot.setStyleSheet("color: #8c8c95; font-size: 12px;")
         
         prog_layout.addWidget(self.time_cur)
         prog_layout.addWidget(self.progress)
@@ -423,7 +657,7 @@ class Aurora(QMainWindow):
         
         ctrl_layout = QHBoxLayout()
         
-        self.lbl_info = QLabel("<span style='font-weight:600; font-size:14px; color:#ffffff;'>Ready to play</span>")
+        self.lbl_info = QLabel("<span style='font-weight:bold; font-size:14px; color:#ffffff;'>Ready to play</span>")
         self.lbl_info.setTextFormat(Qt.TextFormat.RichText)
         self.lbl_info.setMinimumWidth(200)
         ctrl_layout.addWidget(self.lbl_info)
@@ -437,7 +671,7 @@ class Aurora(QMainWindow):
         b_prev.clicked.connect(self.prev)
         
         self.btn_play = QPushButton("Play")
-        self.btn_play.setStyleSheet("background-color: #e2e2e5; color: #0b0b0e; border-radius: 20px; min-width: 60px; min-height: 40px; font-size: 13px; font-weight: 600;")
+        self.btn_play.setStyleSheet("background-color: #e2e2e5; color: #0b0b0e; border-radius: 20px; min-width: 60px; min-height: 40px; font-size: 13px; font-weight: bold;")
         self.btn_play.clicked.connect(self.toggle_play)
         
         b_next = QPushButton("Next")
@@ -455,7 +689,7 @@ class Aurora(QMainWindow):
         ctrl_layout.addStretch()
         
         self.lbl_speed_val = QLabel("1.0x")
-        self.lbl_speed_val.setStyleSheet("color: #707075; font-weight: 600; font-size: 12px;")
+        self.lbl_speed_val.setStyleSheet("color: #8c8c95; font-weight: bold; font-size: 12px;")
         self.lbl_speed_val.setMinimumWidth(150)
         self.lbl_speed_val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         ctrl_layout.addWidget(self.lbl_speed_val)
@@ -718,6 +952,20 @@ class Aurora(QMainWindow):
                         files_to_add.append(os.path.join(root, file))
             self._import_and_link(files_to_add)
     
+    def _connect_spectrum(self):
+        """Give the spectrum the real audio that is playing (needs Qt 6.8 or newer)."""
+        ok = False
+        if USE_QT and self.player and HAS_AUDIO_TAP:
+            try:
+                self.audio_tap = QAudioBufferOutput(self)
+                self.player.setAudioBufferOutput(self.audio_tap)
+                self.audio_tap.audioBufferReceived.connect(self.visualizer.feed)
+                self.visualizer.set_clock(lambda: (self.player.position(), self.player.playbackRate()))
+                ok = True
+            except Exception:
+                ok = False
+        self.visualizer.set_available(ok)
+
     def fmt_time(self, s):
         if not s or s <= 0:
             return "0:00"
@@ -733,7 +981,7 @@ class Aurora(QMainWindow):
             return
 
         meta = self._get_meta(path)
-        self.lbl_info.setText(f"<span style='font-weight:600; font-size:14px; color:#ffffff;'>{meta['title']}</span><br><span style='color:#a0a0a5; font-size:12px; font-weight:normal;'>{meta['artist']}</span>")
+        self.lbl_info.setText(f"<span style='font-weight:bold; font-size:14px; color:#ffffff;'>{meta['title']}</span><br><span style='color:#a0a0a5; font-size:12px; font-weight:normal;'>{meta['artist']}</span>")
         
         try:
             icon_arg = self.icon_path if os.path.exists(self.icon_path) else 'multimedia-audio-player'
@@ -743,6 +991,7 @@ class Aurora(QMainWindow):
         
         if USE_QT and self.player:
             from PyQt6.QtCore import QUrl
+            self.visualizer.clear()
             self.player.setSource(QUrl.fromLocalFile(path))
             self.player.play()
     
@@ -954,7 +1203,7 @@ def already_running(files_to_open):
 
 
 def main():
-    os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
+    os.environ.setdefault("QT_QPA_PLATFORM", "wayland;xcb")      # QT_QPA_PLATFORM=xcb aurora  to test X11
     
     setup_desktop_integration()
     
