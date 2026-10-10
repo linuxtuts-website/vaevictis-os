@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    # An older Aurora copied by hand into /usr/local/bin would hide this package
+    # (that folder comes first in PATH). Remove it, but only if it really is Aurora.
+    if [ -f /usr/local/bin/aurora ] && head -n 5 /usr/local/bin/aurora | grep -q 'Aurora - Ultimate Carbon Dark Edition'; then
+        rm -f /usr/local/bin/aurora
+        echo "vaevictis-aurora: removed the old hand-copied /usr/local/bin/aurora (this package replaces it)."
+    fi
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database -q /usr/share/applications || true
+    fi
+fi
+
+exit 0

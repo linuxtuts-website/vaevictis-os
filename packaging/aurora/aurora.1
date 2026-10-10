@@ -1,0 +1,29 @@
+.TH AURORA 1 "October 2026" "vaevictis-aurora 1.1.0" "VaeVictis OS"
+.SH NAME
+aurora \- simple offline music player
+.SH SYNOPSIS
+.B aurora
+[\fIFILE\fR...]
+.SH DESCRIPTION
+Aurora is the music player of VaeVictis OS. It keeps a library and playlists,
+and has search, shuffle, repeat, playback speed and a real-time spectrum that
+follows the music. Files given on the command line are added to the library and
+played. If Aurora is already running, the running copy is brought to the front.
+.PP
+Aurora makes no network connection.
+.SH ENVIRONMENT
+.TP
+.B QT_QPA_PLATFORM
+Qt platform to use. The default is "wayland;xcb". Set it to
+.B xcb
+to run through X11, for example to find out whether blurry text comes from
+fractional scaling on Wayland.
+.SH FILES
+.TP
+.I ~/.aurora/library.db
+The library and the playlists (SQLite).
+.TP
+.I ~/.aurora/icon.svg
+Optional window icon.
+.SH SEE ALSO
+https://github.com/linuxtuts-website/vaevictis-os
