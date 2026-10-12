@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.1 (2026-10-12): security release
+
+Fixes found in an audit of the VaeVictis code. Systems installed from 1.0 need the four commands of the
+[security notice](docs/SECURITY-NOTICE-2026-10-12.md); the 1.0.1 installer does all of it by itself.
+- **Installer:** removes the polkit rule that the live session writes for its user (`user`): copied into an installed system it
+  gave administrator rights without a password to a user with that name. The installer refuses to finish if such a rule is left.
+- **Installer:** no longer adds the user to the `libvirt` group (administrator-equivalent without a password); virt-manager asks
+  for the password instead.
+- **Image and installer:** root is locked with no password hash at all (1.0 kept a locked hash from the build system); every
+  installed system creates its own `ssl-cert-snakeoil` TLS key; `/root` is emptied (build caches and an obsolete script).
+- **HIDS 2.1.1:** file names with control characters can no longer forge lines in the log or break the dashboard.
+- **Debian security updates** included in the image: ghostscript, xz-utils/liblzma.
+- **Build:** `vv-chroot seal`, `vv-release` and `vv-verify-iso` check all of the above, so it cannot come back unnoticed.
+- `vv-panic-action` (the root part of the panic button) and the shipped version of VaeVictis PDF are now in the repository too.
+
 ## APT repository (2026-10-10)
 
 A signed APT repository at <https://apt.linuxtuts.online/> (files: [`vaevictis-apt`](https://github.com/linuxtuts-website/vaevictis-apt)),

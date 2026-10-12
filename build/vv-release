@@ -45,7 +45,12 @@ gate() { fails+=("$*"); }
 [ -z "$(asroot ls -A "$CH/etc/NetworkManager/system-connections" 2>/dev/null)" ] || gate "NetworkManager profiles (Wi-Fi passwords?) are inside"
 shadow="$(asroot cat "$CH/etc/shadow" 2>/dev/null || true)"
 root_hash="$(echo "$shadow" | awk -F: '$1=="root"{print $2}')"
-case "$root_hash" in '!'*|'*'*) ;; *) gate "root has a password hash inside the image (lock it: passwd -l root)" ;; esac
+case "$root_hash" in '*'|'!'|'!*'|'!!') ;; *) gate "root has a password hash inside the image, even if locked (run: ./vv-chroot seal)" ;; esac
+asroot test ! -e "$CH/etc/ssl/private/ssl-cert-snakeoil.key" || gate "the TLS snakeoil private key is inside (run: ./vv-chroot seal)"
+[ -z "$(asroot find "$CH/root" -mindepth 1 -maxdepth 1 ! -name .bashrc ! -name .profile 2>/dev/null)" ] \
+    || gate "/root holds leftovers of the build (run: ./vv-chroot seal)"
+grep -q 'sudo_on_live' "$CH/usr/local/bin/vaevictis_install.sh" 2>/dev/null \
+    || gate "the installer in the chroot is the old one (it keeps the live polkit rule): copy build/vaevictis_install.sh"
 while IFS=: read -r name _ uid _; do
     if [ "$uid" -ge 1000 ] && [ "$uid" -lt 60000 ]; then
         h="$(echo "$shadow" | awk -F: -v u="$name" '$1==u{print $2}')"

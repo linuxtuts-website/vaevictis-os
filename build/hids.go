@@ -49,9 +49,10 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
-const version = "2.1"
+const version = "2.1.1"
 
 const sealMarker = "/run/hids.sealing" // present while -seal works: the daemon stopping then is not an alarm
 
@@ -370,6 +371,17 @@ func clearReported(path string) {
 	alertMu.Unlock()
 }
 
+// safe makes a file name harmless to print: control characters (newline, carriage return, escape...)
+// become visible escapes such as \n, so a crafted name cannot add fake lines to the log or send
+// escape sequences to a terminal. Ordinary names are returned unchanged, so the log format is the same.
+func safe(s string) string {
+	if !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) }) && utf8.ValidString(s) {
+		return s
+	}
+	q := strconv.Quote(s)
+	return q[1 : len(q)-1]
+}
+
 func alert(kind, path, detail string) {
 	key := kind + "|" + detail
 	crit := isCritical(path) || strings.HasPrefix(kind, "NEW SETUID")
@@ -381,9 +393,9 @@ func alert(kind, path, detail string) {
 	reported[path] = key
 	alertMu.Unlock()
 
-	msg := kind + " " + path
+	msg := kind + " " + safe(path)
 	if detail != "" {
-		msg += " (" + detail + ")"
+		msg += " (" + safe(detail) + ")"
 	}
 	if crit {
 		msg = "[CRITICAL] " + msg // hids-notify shows these as urgent popups
@@ -469,17 +481,17 @@ func runCheck() int {
 	now := snapshot()
 	added, removed, modified := compare(b.Files, now)
 	for _, p := range modified {
-		fmt.Printf("modified: %s (%s)\n", p, describe(b.Files[p], now[p]))
+		fmt.Printf("modified: %s (%s)\n", safe(p), describe(b.Files[p], now[p]))
 	}
 	for _, p := range added {
 		if isSetuid(now[p]) {
-			fmt.Println("NEW SETUID FILE:", p)
+			fmt.Println("NEW SETUID FILE:", safe(p))
 		} else {
-			fmt.Println("new file:", p)
+			fmt.Println("new file:", safe(p))
 		}
 	}
 	for _, p := range removed {
-		fmt.Println("removed: ", p)
+		fmt.Println("removed: ", safe(p))
 	}
 	if len(added)+len(removed)+len(modified) == 0 {
 		fmt.Printf("OK: %d files match the baseline of %s\n", len(b.Files), b.Created)

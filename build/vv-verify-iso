@@ -68,7 +68,7 @@ while read -r path want; do
     elif [ "$got" = "$want" ]; then ok "$path $got"
     else bad "$path is $got bytes, expected $want (old version?)"; fi
 done <<'EOF'
-usr/local/bin/vaevictis_install.sh 37728
+usr/local/bin/vaevictis_install.sh 39129
 usr/local/sbin/vv-nvidia 11163
 usr/local/libexec/vv-vpn-helper 11629
 usr/local/bin/vv-welcome 19406
@@ -89,6 +89,8 @@ printf '%s\n' "$nft_conf" | grep -q vpn_ports && bad "old outbound port list (vp
 cat_of usr/local/libexec/vv-vpn-helper | grep -q drop_ipv6_from_conf && ok "vv-vpn-helper strips IPv6 from configs" || bad "vv-vpn-helper is the old version"
 cat_of usr/local/bin/vaevictis_install.sh | grep -q 'systemd-cryptsetup' && ok "installer checks systemd-cryptsetup" || bad "installer has no systemd-cryptsetup guard"
 cat_of usr/local/bin/vaevictis_install.sh | grep -q 'EFI_BEFORE' && ok "installer saves the firmware boot list" || bad "installer lacks the firmware boot list check"
+cat_of usr/local/bin/vaevictis_install.sh | grep -q 'sudo_on_live' && ok "installer removes the live polkit rule" || bad "installer keeps the live polkit rule (root without password for 'user')"
+cat_of usr/local/bin/vaevictis_install.sh | grep -qE '^for g in .*libvirt' && bad "installer adds the user to libvirt (root without password)" || ok "installer does not add the user to libvirt"
 cat_of usr/local/sbin/vv-grub-theme | grep -q 'backgrounds/vaevictis.png' && ok "GRUB theme uses the VaeVictis wallpaper" || bad "GRUB theme is the old version"
 cat_of usr/libexec/systemd-sysctl-helper > "$W/hids-bin" || true      # a file, not a pipe: grep -q would break the pipe (pipefail)
 grep -aq 'NEW SETUID FILE' "$W/hids-bin" && ok "HIDS daemon is the 2.1 build" || bad "HIDS daemon is missing or the old version (run vv-hids)"
@@ -110,6 +112,13 @@ for pat in 'etc/wireguard/.+\.(conf|orig)$' 'id_(ed25519|rsa|ecdsa)' '\.kdbx$' '
     if [ -n "$hits" ]; then bad "found files matching $pat:"; printf '          %s\n' $hits; leak=1; fi
 done
 [ "$leak" = 0 ] && ok "no keys, VPN configs, histories, password files or browser profiles"
+case "$(cat_of etc/shadow | awk -F: '$1=="root"{print $2}')" in
+    '*'|'!'|'!*'|'!!') ok "root: locked, no password hash" ;;
+    *) bad "root has a password hash inside the image (run: vv-chroot seal)" ;;
+esac
+exists etc/ssl/private/ssl-cert-snakeoil.key && bad "the TLS snakeoil private key is inside (run: vv-chroot seal)" || ok "no shared TLS private key"
+rootleft="$(awk '{ print $NF }' "$W/list" | sed -n 's|^squashfs-root/root/\([^/]*\)$|\1|p' | grep -vxE '\.bashrc|\.profile' | tr '\n' ' ' || true)"
+[ -z "$rootleft" ] && ok "/root holds only .bashrc and .profile" || bad "/root holds leftovers: $rootleft"
 mid="$(size_of etc/machine-id)"
 [ "${mid:-1}" = 0 ] && ok "machine-id is empty (new one at every boot)" || bad "machine-id is not empty (${mid:-missing})"
 echo "  home/ in the image:"

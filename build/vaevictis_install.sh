@@ -577,17 +577,32 @@ scrub_live_artifacts() {
     rm -f "$TARGET"/etc/ssh/ssh_host_*
     find "$TARGET/var/log" -type f -exec truncate -s0 {} + 2>/dev/null || true
     rm -rf "$TARGET"/var/log/journal/* 2>/dev/null || true
+    # 5. polkit rule written by live-config for the live user ("user"): administrator rights with NO password.
+    #    It is created at every live boot, so the copy above brought it along: it must never reach an installed system.
+    rm -f "$TARGET/usr/share/polkit-1/rules.d/sudo_on_live.rules" "$TARGET/etc/polkit-1/rules.d/sudo_on_live.rules"
+    if grep -rqsE 'Grant the (live|sudo) user' "$TARGET/usr/share/polkit-1/rules.d" "$TARGET/etc/polkit-1/rules.d"; then
+        die "a live-session polkit rule is still in the installed system: refusing to finish."
+    fi
+    # 6. TLS key: the one in the live session must not be shared, every installed system gets its own
+    rm -f "$TARGET/etc/ssl/private/ssl-cert-snakeoil.key" "$TARGET/etc/ssl/certs/ssl-cert-snakeoil.pem"
+    if chroot_has ssl-cert; then
+        chroot "$TARGET" make-ssl-cert generate-default-snakeoil --force-overwrite \
+            || warn "could not create a new TLS key (ssl-cert-snakeoil): nothing in a default install uses it."
+    fi
+    # 7. Root's home: leftovers of the build and of the live session
+    find "$TARGET/root" -mindepth 1 -maxdepth 1 ! -name .bashrc ! -name .profile -exec rm -rf {} + 2>/dev/null || true
 }
 scrub_live_artifacts
 
 chroot "$TARGET" useradd -m -s /bin/bash "$NEWUSER"
 chroot "$TARGET" usermod -aG sudo "$NEWUSER"
-for g in audio video cdrom plugdev netdev dip libvirt kvm; do
+# NOT "libvirt": its members control system VMs without a password, which equals root. virt-manager asks for the password instead.
+for g in audio video cdrom plugdev netdev dip kvm; do
     if chroot "$TARGET" getent group "$g" >/dev/null 2>&1; then chroot "$TARGET" usermod -aG "$g" "$NEWUSER"; fi
 done
 printf '%s:%s\n' "$NEWUSER" "$PASS1" | chroot "$TARGET" chpasswd
 chroot "$TARGET" usermod -U "$NEWUSER" 2>/dev/null || true
-chroot "$TARGET" passwd -l root
+chroot "$TARGET" usermod -p '*' root          # locked, and no password hash inherited from the build system
 unset PASS1 PASS2
 
 # ---------------------------------------------------------------- initramfs + GRUB

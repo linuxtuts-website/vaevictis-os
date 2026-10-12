@@ -3,7 +3,10 @@
 A hardened **Debian 13 (trixie)** desktop for people who want to switch to Linux and keep their data safe.
 Live USB, graphical desktop (GNOME), disk-encrypting installer. Free, open, and honest about what it does and does not do.
 
-**Status: 1.0.** Download page: <https://linuxtuts.online/vaevictis/vaevictis.html>
+**Status: 1.0.1.** Download page: <https://vaevictisos.org/>
+
+> **Installed 1.0? Run the four commands of the [2026-10-12 security notice](docs/SECURITY-NOTICE-2026-10-12.md)**
+> (one minute, then log out and back in). New installs from the 1.0.1 ISO are not affected.
 
 ## Download and verify
 

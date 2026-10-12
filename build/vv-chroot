@@ -235,6 +235,12 @@ cmd_seal() {
           "$CH"/var/lib/NetworkManager/seen-bssids "$CH"/var/lib/NetworkManager/timestamps \
           "$CH"/var/lib/dhcp/*.leases "$CH"/var/lib/fail2ban/fail2ban.sqlite3; say "NetworkManager/DHCP/fail2ban state removed"
     rm -f "$CH"/etc/dpkg/*-old "$CH"/var/lib/dpkg/*-old "$CH"/var/cache/debconf/*-old
+    chroot "$CH" /usr/sbin/usermod -p '*' root || die "cannot clear root's password hash"
+    say "root locked with no password hash (nothing of the build password ships)"
+    rm -f "$CH/etc/ssl/private/ssl-cert-snakeoil.key" "$CH/etc/ssl/certs/ssl-cert-snakeoil.pem"
+    say "TLS snakeoil key removed (the live session and the installer create a new one)"
+    find "$CH/root" -mindepth 1 -maxdepth 1 ! -name .bashrc ! -name .profile -exec rm -rf {} + 2>/dev/null || true
+    say "/root emptied (only .bashrc and .profile kept)"
     echo "Done. Not touched on purpose: /etc/resolv.conf, NetworkManager profiles, user accounts. Check them with: vv-chroot audit"
 }
 

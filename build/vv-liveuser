@@ -46,7 +46,7 @@ for u in "${USERS[@]}"; do
     if [ -z "$SRC_USER" ] && { [ -f "$CH$home/.config/dconf/user" ] || [ -n "${VV_DCONF_DUMP_FILE:-}" ]; }; then SRC_USER="$u"; SRC_HOME="$home"; fi
 done
 root_hash="$(awk -F: '$1=="root"{print $2}' "$CH/etc/shadow")"
-case "$root_hash" in '!'*|'*'*) echo "  root: already locked" ;; *) echo "  root: has a password hash -> will be locked (passwd -l root)" ;; esac
+case "$root_hash" in '*'|'!'|'!*'|'!!') echo "  root: locked, no password hash" ;; *) echo "  root: has a password hash -> will be removed (usermod -p '*' root)" ;; esac
 NAMES_RE="$(printf '%s|' "${USERS[@]:-__none__}" | sed 's/|$//')"
 while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -219,7 +219,7 @@ for f in "$CH"/etc/sudoers.d/*; do
     if ! grep -qvE '^[[:space:]]*(#|$)' "$f"; then rm -f "$f"; echo "  sudoers drop-in ${f#"$CH"} removed (nothing else in it)"
     else echo "  sudoers drop-in ${f#"$CH"}: lines naming the user removed"; fi
 done
-CMDS="command -v dconf >/dev/null 2>&1 && dconf update; passwd -l root >/dev/null; systemctl enable vv-live-session.service"
+CMDS="command -v dconf >/dev/null 2>&1 && dconf update; usermod -p '*' root; systemctl enable vv-live-session.service"
 for u in "${USERS[@]}"; do CMDS="$CMDS; userdel -r $u 2>/dev/null; rm -f /var/lib/AccountsService/users/$u"; done
 in_chroot "$CMDS"
 echo "  removed: ${USERS[*]:-nobody}; root locked; dconf database updated"

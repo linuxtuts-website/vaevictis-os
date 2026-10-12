@@ -56,7 +56,8 @@ journal) on the machine it watches; it sends nothing over the network.
 
 ## Defaults that are public on purpose
 
-- Live session: user `user`, password `live`, passwordless `sudo`. Valid only in the live session; the installed system has none of it.
+- Live session: user `user`, password `live`, passwordless `sudo`. Valid only in the live session; the installed system has none of it (since 1.0.1: systems installed from 1.0 need the
+  [2026-10-12 security notice](docs/SECURITY-NOTICE-2026-10-12.md)).
 - The firewall allows all outgoing traffic. This is deliberate: blocking outgoing ports by default breaks normal use and gives
   a false sense of safety. If you need an egress policy, edit `/etc/nftables.conf`.
 

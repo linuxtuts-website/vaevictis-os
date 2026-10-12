@@ -1,0 +1,25 @@
+#!/bin/sh
+# vv-panic-action - the privileged half of Panic Mode. It is started only through sudo by /usr/local/bin/vv-panic.
+# Cuts the network, flushes the disks and powers off at once. It is NOT a secure erase of RAM.
+[ "$(id -u)" -eq 0 ] || { echo "vv-panic-action: must run as root" >&2; exit 1; }
+
+# VV_PANIC_DRYRUN only matters when the program is started directly as root (sudo's env_reset removes it),
+# so a normal user cannot use it to switch the panic button off.
+act() {
+    if [ -n "${VV_PANIC_DRYRUN:-}" ]; then echo "would run: $*"; else "$@" >/dev/null 2>&1; fi
+}
+
+act rfkill block all
+for dev in /sys/class/net/*; do               # every interface, whatever its name (eth0, enp3s0, wlp2s0...)
+    name="${dev##*/}"
+    [ "$name" = "lo" ] || act ip link set dev "$name" down
+done
+act timeout 3 sync                            # never let a hung disk delay the shutdown
+
+if [ -n "${VV_PANIC_DRYRUN:-}" ]; then
+    echo "would run: echo 128 > /proc/sys/kernel/sysrq; echo o > /proc/sysrq-trigger"
+else
+    echo 128 > /proc/sys/kernel/sysrq 2>/dev/null      # allow only reboot and power-off requests, nothing else
+    echo o > /proc/sysrq-trigger 2>/dev/null           # immediate power-off
+fi
+act poweroff -f                               # fallback if SysRq is not available
