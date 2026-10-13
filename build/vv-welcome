@@ -163,7 +163,7 @@ def checks():
 
     port = ssh_port()
     for unit, label, text in (
-        ("nftables", "Firewall (nftables)", "Default-deny in and out. See the Network tab."),
+        ("nftables", "Firewall (nftables)", "Incoming connections are dropped; outgoing traffic is allowed. See the Network tab."),
         ("ssh", "SSH server", f"Port {port}, keys only, no root, only members of group 'sshusers' (nobody yet)."),
         ("fail2ban", "fail2ban", "Bans an address for 1 hour after 3 failed SSH logins in 10 minutes."),
     ):
@@ -172,12 +172,6 @@ def checks():
             c.append((label, "off", "ok", "Switched off: nothing listens for SSH. To use it, see the Network tab."))
             continue
         c.append((label, st, "ok" if st == "active" else "warn", text))
-
-    hids = run("systemctl", "is-active", "sysctl-helper") or "unknown"
-    c.append(("HIDS", hids, "ok" if hids == "active" else "warn",
-              "File integrity monitor: it checks the system programs (bin, sbin, usr/bin, usr/local/bin) and "
-              "/etc/passwd, shadow and sudoers against a recorded baseline, then watches them live. Changes go to "
-              "/var/log/hids.log and a notification; package updates are recognised and not flagged."))
 
     vdir = "/sys/devices/system/cpu/vulnerabilities"
     try:
@@ -256,7 +250,7 @@ class Welcome(Gtk.Window):
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.add(root)
         root.pack_start(lab("VAEVICTIS OS", "brand"), False, False, 0)
-        root.pack_start(lab("Hardened live environment", "title"), False, False, 0)
+        root.pack_start(lab("Hardened live environment" if "boot=live" in (rd("/proc/cmdline", "") or "") else "Hardened desktop", "title"), False, False, 0)
         root.pack_start(lab(f"Kernel {platform.release()}  \u00b7  Debian 13  \u00b7  Stateless. Stealth. Brutal.", "sub"), False, False, 0)
 
         self.nb = Gtk.Notebook()
@@ -269,7 +263,7 @@ class Welcome(Gtk.Window):
         self._fill_security()
 
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        site = Gtk.LinkButton.new_with_label("https://linuxtuts.online", "linuxtuts.online")
+        site = Gtk.LinkButton.new_with_label("https://vaevictisos.org", "vaevictisos.org")
         site.set_relief(Gtk.ReliefStyle.NONE)
         row.pack_start(site, False, False, 0)
         refresh = Gtk.Button(label="REFRESH")
@@ -318,8 +312,8 @@ class Welcome(Gtk.Window):
         box.pack_start(lab("sudo fail2ban-client status sshd", "code", selectable=True), False, False, 0)
         box.pack_start(lab("VPN", "h"), False, False, 6)
         box.pack_start(lab(
-            "WireGuard on the allowed UDP port (51820 by default). The VPN does not block traffic that stays outside the tunnel: "
-            "there is no kill switch yet.", "dim", wrap=True), False, False, 0)
+            "WireGuard, managed by VaeVictis VPN. With the kill switch on, nothing leaves this PC or its virtual machines "
+            "outside the tunnel, also while it reconnects; it lasts until you disconnect, release it or restart.", "dim", wrap=True), False, False, 0)
         return sw
 
     def _apps_page(self):
@@ -334,9 +328,6 @@ class Welcome(Gtk.Window):
             ("Snap", "Incremental snapshots with hardlinks (rsync) for ext4, xfs and btrfs: system snapshot (without /home), "
                      "folder backup, list, delete and restore. Run 'sudo v-snap'. Installed systems only. "
                      "It lives on the same disk: it protects from a bad update, not from a dead disk."),
-            ("HIDS", "File integrity dashboard: the last 100 log lines, refreshed every 3 seconds. A change you made yourself "
-                     "(for example a new password) shows up as an alert; 'Authorize Changes & Seal System' accepts the "
-                     "current state as the new reference. Use it ONLY for your own changes, sealing an intrusion would hide it."),
             ("Panic", "Cuts the network, flushes the disks and powers off at once (needs no password, asks nothing twice). "
                       "It is not a secure erase: RAM fades after power-off, it is not wiped."),
             ("KeePassXC", "Offline password manager. Your database is a single encrypted file; nothing is synced anywhere."),

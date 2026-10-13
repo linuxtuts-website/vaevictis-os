@@ -107,6 +107,20 @@ for f in usr/local/bin/vv-xml usr/local/bin/vaevictis-dark.xml \
     if [ -e "$CH/$f" ]; then rm -f "$CH/$f" && echo "  removed /$f"; fi
 done
 
+# The HIDS (file-integrity daemon) is gone from 1.1: it was the biggest piece of our own code always running as root.
+# Remove what 1.0/1.0.1 builds installed, so the image carries no daemon, popup, launcher or log of it.
+echo "== removed: HIDS (dropped in 1.1)"
+rm -f "$CH/etc/systemd/system/multi-user.target.wants/sysctl-helper.service"
+for f in usr/libexec/systemd-sysctl-helper var/log/hids_baseline.json; do
+    [ -e "$CH/$f" ] && { chattr -i "$CH/$f" 2>/dev/null || true; }
+done
+for f in usr/libexec/systemd-sysctl-helper etc/systemd/system/sysctl-helper.service \
+         usr/local/bin/hids-gui usr/local/bin/hids-notify etc/xdg/autostart/hids-notify.desktop \
+         usr/share/applications/hids-security.desktop usr/share/icons/hicolor/scalable/apps/hids.svg \
+         var/log/hids.log var/log/hids_baseline.json; do
+    if [ -e "$CH/$f" ] || [ -L "$CH/$f" ]; then rm -f "$CH/$f" && echo "  removed /$f"; fi
+done
+
 # ------------------------------------------------------------------ 2. .desktop files
 declare -A MAP=(
     [aurora]=vv-aurora          [linpaint]=vv-linpaint     [vaevictis_install]=vv-install

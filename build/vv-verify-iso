@@ -92,11 +92,12 @@ cat_of usr/local/bin/vaevictis_install.sh | grep -q 'EFI_BEFORE' && ok "installe
 cat_of usr/local/bin/vaevictis_install.sh | grep -q 'sudo_on_live' && ok "installer removes the live polkit rule" || bad "installer keeps the live polkit rule (root without password for 'user')"
 cat_of usr/local/bin/vaevictis_install.sh | grep -qE '^for g in .*libvirt' && bad "installer adds the user to libvirt (root without password)" || ok "installer does not add the user to libvirt"
 cat_of usr/local/sbin/vv-grub-theme | grep -q 'backgrounds/vaevictis.png' && ok "GRUB theme uses the VaeVictis wallpaper" || bad "GRUB theme is the old version"
-cat_of usr/libexec/systemd-sysctl-helper > "$W/hids-bin" || true      # a file, not a pipe: grep -q would break the pipe (pipefail)
-grep -aq 'NEW SETUID FILE' "$W/hids-bin" && ok "HIDS daemon is the 2.1 build" || bad "HIDS daemon is missing or the old version (run vv-hids)"
-exists usr/local/bin/hids-notify && exists etc/xdg/autostart/hids-notify.desktop && ok "HIDS popups (hids-notify + autostart)" || bad "hids-notify is missing (run vv-hids)"
-grep -aq 'runuser' "$W/hids-bin" && bad "HIDS daemon still switches user to show popups (old build)" || ok "HIDS daemon does not switch user"
-cat_of etc/systemd/system/sysctl-helper.service | grep -q 'ExecStopPost' && ok "HIDS service warns when it is stopped" || bad "HIDS service unit is the old one (run vv-hids)"
+hidsleft=""
+for f in usr/libexec/systemd-sysctl-helper etc/systemd/system/sysctl-helper.service usr/local/bin/hids-gui \
+         usr/local/bin/hids-notify etc/xdg/autostart/hids-notify.desktop usr/share/applications/hids-security.desktop; do
+    exists "$f" && hidsleft="$hidsleft /$f"
+done
+[ -z "$hidsleft" ] && ok "HIDS removed (1.1)" || bad "HIDS files still in the image (run vv-branding):$hidsleft"
 
 head_ "Packages"
 for p in systemd-cryptsetup cryptsetup-initramfs console-setup ffmpegthumbnailer firefox-esr grub-efi-amd64-bin grub-pc-bin os-prober efibootmgr \

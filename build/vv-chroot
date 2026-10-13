@@ -256,7 +256,7 @@ cmd_lang() {
     for d in usr/share/applications etc/xdg/autostart; do
         [ -d "$CH/$d" ] || continue
         while IFS= read -r f; do dirs+=("$f"); done < <(find "$CH/$d" -maxdepth 1 -type f \( -name 'vv-*' -o -name 'v-snap*' \
-            -o -name 'aurora*' -o -name 'linpaint*' -o -name 'hids*' -o -name 'vaevictis*' -o -name 'sysctl-helper*' \))
+            -o -name 'aurora*' -o -name 'linpaint*' -o -name 'vaevictis*' \))
     done
     [ -d "$HERE" ] && dirs+=("$HERE")
     echo "Scanning: our scripts and launchers in the chroot, and the project folder $HERE"
@@ -367,7 +367,7 @@ cmd_pkgcheck() {
         "python3-pyqt6|Aurora and PDF Tool"
         "python3-pyqt6.qtmultimedia|Aurora"
         "python3-mutagen|Aurora"
-        "python3-gi|VPN, HIDS"
+        "python3-gi|VPN, welcome window"
         "## Installer (so the installation works without a network)"
         "grub2-common|grub-install and update-grub: the programs that install the boot loader"
         "grub-common|boot loader tools"
@@ -432,7 +432,7 @@ checks = [
     ("Aurora",   try_import("PyQt6.QtWidgets") and try_import("PyQt6.QtMultimedia") and try_import("mutagen")),
     ("PDF Tool", try_import("PyQt6.QtWidgets") and try_import("pymupdf", "fitz")),
     ("Linpaint", try_import("tkinter") and try_import("PIL.ImageTk") and try_import("gi")),
-    ("VPN, HIDS", try_import("gi")),
+    ("VPN, welcome window", try_import("gi")),
 ]
 for name, ok in checks:
     print("    %-4s  %s" % ("yes" if ok else "NO", name))
