@@ -7,8 +7,12 @@
 #     system and home read-only except the data folders, secrets hidden, D-Bus filtered)
 #   v-snap, the VPN manager, the installer, and their launchers (menu, and desktop of new users)
 #   apt: no recommended or suggested packages unless asked (/etc/apt/apt.conf.d/99-vaevictis-no-bloat)
+#   with --apt-repo: the VaeVictis APT repository, through the package vaevictis-archive-keyring (key, source entry,
+#     and a pin that lets it provide only vaevictis-* packages). Give --apt-repo ONLY when two-factor login is on for
+#     the GitHub account and the Cloudflare account; the script itself checks that the published index is signed and
+#     carries an expiry date (Valid-Until).
 #
-#   vv-apps        apply (safe to repeat; replaced files are backed up next to the chroot)
+#   vv-apps [--apt-repo]   apply (safe to repeat; replaced files are backed up next to the chroot)
 #
 # Run it after vv-secure and vv-harden, before vv-branding (which gives the launchers their icons).
 set -euo pipefail
@@ -20,6 +24,10 @@ CH="$(realpath -m "$CH")"
 VVC="$HERE/vv-chroot"
 
 die() { echo "vv-apps: $*" >&2; exit 1; }
+APT_REPO=0
+for a in "$@"; do
+    case "$a" in --apt-repo) APT_REPO=1 ;; *) die "unknown option: $a (see the comment at the top)" ;; esac
+done
 [ "$(id -u)" -eq 0 ] || exec sudo -E VV_CHROOT="$CH" "$0" "$@"
 [ -f "$CH/etc/debian_version" ] && [ "$CH" != "/" ] || die "not a Debian root filesystem: $CH"
 [ -x "$VVC" ] || die "vv-chroot must be next to this script ($VVC)"
@@ -31,6 +39,17 @@ done
 AURORA_VER=$(sed -n 's/^Version: //p' "$ROOT/packaging/aurora/control")
 DEB="$ROOT/dist/vaevictis-aurora_${AURORA_VER}_all.deb"
 [ -f "$DEB" ] || die "$DEB not found: build it first with  packaging/aurora/build.sh  (from the repository root)"
+if [ "$APT_REPO" = 1 ]; then
+    KR_VER=$(sed -n 's/^Version: //p' "$ROOT/packaging/archive-keyring/control")
+    KRDEB="$ROOT/dist/vaevictis-archive-keyring_${KR_VER}_all.deb"
+    [ -f "$KRDEB" ] || die "$KRDEB not found: build it first with  packaging/archive-keyring/build.sh"
+    # the published index must be signed and must expire (Valid-Until)
+    idx=$(curl -fsS --max-time 20 https://apt.linuxtuts.online/dists/vaevictis/InRelease) \
+        || die "cannot read https://apt.linuxtuts.online/dists/vaevictis/InRelease (network?)"
+    printf '%s\n' "$idx" | grep -q '^-----BEGIN PGP SIGNED MESSAGE-----' || die "the published index is not signed"
+    printf '%s\n' "$idx" | grep -q '^Valid-Until: ' \
+        || die "the published index has no Valid-Until: publish it with vv-apt-publish first"
+fi
 
 BK="$(dirname "$CH")/vv-backups/$(date +%Y%m%d-%H%M%S)"
 bak() { local rel="${1#$CH/}"; [ -e "$1" ] || return 0; mkdir -p "$BK"; (cd "$CH" && cp -a --parents "$rel" "$BK/"); }
@@ -117,6 +136,16 @@ put 0644 etc/apt/apt.conf.d/99-vaevictis-no-bloat <<'EOF'
 APT::Install-Recommends "false";
 APT::Install-Suggests "false";
 EOF
+
+echo "== VaeVictis APT repository"
+if [ "$APT_REPO" = 1 ]; then
+    cp "$KRDEB" "$CH/tmp/vv-keyring.deb"
+    "$VVC" run dpkg -i /tmp/vv-keyring.deb || { rm -f "$CH/tmp/vv-keyring.deb"; die "dpkg could not install $KRDEB"; }
+    rm -f "$CH/tmp/vv-keyring.deb"
+    echo "  configured: only vaevictis-* packages, signed index with an expiry date"
+else
+    echo "  NOT configured (add --apt-repo once two-factor login is on for GitHub and Cloudflare)"
+fi
 
 echo "== inside the chroot: libraries the programs import"
 "$VVC" run /bin/sh -c '

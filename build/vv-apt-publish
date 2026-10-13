@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# vv-apt-publish - adds packages to the VaeVictis APT repository and signs its index, with an expiry date.
+#
+#   vv-apt-publish --repo DIR --key FINGERPRINT [--days N] [PACKAGE.deb ...]
+#
+#   DIR          your checkout of https://github.com/linuxtuts-website/vaevictis-apt
+#   FINGERPRINT  the archive key (its signing subkey is used): 0A41158C1DD6718D3D3FFED068486B39B2A99993
+#   --days N     the signed index is valid for N days (default 30). Without packages: re-sign only.
+#
+# Valid-Until: apt refuses an index older than its expiry date, so nobody can keep serving an old, signed index
+# to hide a newer fixed package (a "freeze" attack). The price: RE-SIGN BEFORE THE DATE, or every VaeVictis system
+# reports an error for this repository at "apt update" (Debian's own updates keep working). Re-signing changes
+# nothing else: run this script without packages, check, commit, push.
+#
+# It only writes into DIR. It never commits or pushes: you check the result and publish it yourself.
+# A published version is never replaced: a different file under the same name is refused (a fix is a new version).
+# Only packages named vaevictis-* are accepted (the systems trust this repository for those names only).
+set -euo pipefail
+
+EXPECTED_FPR="0A41158C1DD6718D3D3FFED068486B39B2A99993"
+SUITE=vaevictis
+COMP=main
+ARCH=amd64
+die() { echo "vv-apt-publish: $*" >&2; exit 1; }
+
+REPO=""; KEY=""; DAYS=30; DEBS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --repo) REPO="$2"; shift 2 ;;
+        --key)  KEY="$2"; shift 2 ;;
+        --days) DAYS="$2"; shift 2 ;;
+        -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -*)     die "unknown option: $1" ;;
+        *)      DEBS+=("$1"); shift ;;
+    esac
+done
+[ -n "$REPO" ] && [ -n "$KEY" ] || die "usage: vv-apt-publish --repo DIR --key FINGERPRINT [--days N] [PACKAGE.deb ...]"
+[[ "$DAYS" =~ ^[0-9]+$ ]] && [ "$DAYS" -ge 1 ] && [ "$DAYS" -le 365 ] || die "--days must be 1..365"
+[ "$(id -u)" -ne 0 ] || die "run it as your normal user (your GPG key), not as root"
+for c in apt-ftparchive gpg gpgv dpkg-deb gzip xz; do
+    command -v "$c" >/dev/null 2>&1 || die "$c is missing (apt-ftparchive: package apt-utils)"
+done
+REPO="$(realpath -e -- "$REPO")" || die "repository folder not found"
+[ "$(cat "$REPO/CNAME" 2>/dev/null)" = "apt.linuxtuts.online" ] && [ -d "$REPO/dists/$SUITE" ] \
+    || die "$REPO is not the vaevictis-apt checkout (CNAME apt.linuxtuts.online, dists/$SUITE)"
+KEYRING="$REPO/vaevictis-archive-keyring.gpg"
+[ "$(gpg --show-keys --with-colons "$KEYRING" 2>/dev/null | awk -F: '$1 == "fpr" {print $10; exit}')" = "$EXPECTED_FPR" ] \
+    || die "the public key in the repository is not the archive key $EXPECTED_FPR: stop and check"
+gpg --list-secret-keys "$KEY" >/dev/null 2>&1 || die "no secret key '$KEY' in your keyring"
+
+# 1. packages into the pool
+for deb in "${DEBS[@]}"; do
+    [ -f "$deb" ] || die "$deb not found"
+    pkg=$(dpkg-deb -f "$deb" Package); ver=$(dpkg-deb -f "$deb" Version); arch=$(dpkg-deb -f "$deb" Architecture)
+    [[ "$pkg" == vaevictis-* ]] || die "$deb: package '$pkg' is not named vaevictis-*: refused"
+    case "$arch" in all|"$ARCH") ;; *) die "$deb: architecture $arch is not all or $ARCH" ;; esac
+    dest="$REPO/pool/$COMP/${pkg:0:1}/$pkg/${pkg}_${ver}_${arch}.deb"
+    if [ -e "$dest" ]; then
+        cmp -s "$deb" "$dest" || die "$pkg $ver is already published with DIFFERENT content: a fix needs a new version"
+        echo "already published: $pkg $ver"
+    else
+        install -D -m 0644 "$deb" "$dest"
+        echo "added: $pkg $ver ($(sha256sum "$deb" | cut -c1-16)...)"
+    fi
+done
+
+# 2. the index
+cd "$REPO"
+bin="dists/$SUITE/$COMP/binary-$ARCH"
+mkdir -p "$bin"
+apt-ftparchive packages "pool/$COMP" > "$bin/Packages"
+gzip -9nc "$bin/Packages" > "$bin/Packages.gz"
+xz -9c "$bin/Packages" > "$bin/Packages.xz"
+rm -f "dists/$SUITE/Release" "dists/$SUITE/InRelease" "dists/$SUITE/Release.gpg"   # never hashed into the new one
+rel=$(mktemp)
+trap 'rm -f "$rel"' EXIT
+apt-ftparchive \
+    -o "APT::FTPArchive::Release::Origin=VaeVictis OS" \
+    -o "APT::FTPArchive::Release::Label=VaeVictis OS" \
+    -o "APT::FTPArchive::Release::Suite=$SUITE" \
+    -o "APT::FTPArchive::Release::Codename=$SUITE" \
+    -o "APT::FTPArchive::Release::Architectures=$ARCH" \
+    -o "APT::FTPArchive::Release::Components=$COMP" \
+    -o "APT::FTPArchive::Release::Description=VaeVictis OS - packages by the author" \
+    -o "APT::FTPArchive::Release::ValidTime=$((DAYS * 86400))" \
+    release "dists/$SUITE" > "$rel"
+install -m 0644 "$rel" "dists/$SUITE/Release"
+
+# 3. the signatures (the archive key's signing subkey), checked with nothing but the published public key
+gpg --local-user "$KEY" --digest-algo SHA512 --clearsign --output "dists/$SUITE/InRelease" "dists/$SUITE/Release"
+gpg --local-user "$KEY" --digest-algo SHA512 --armor --detach-sign --output "dists/$SUITE/Release.gpg" "dists/$SUITE/Release"
+gpgv --keyring "$KEYRING" "dists/$SUITE/InRelease" 2>/dev/null \
+    && gpgv --keyring "$KEYRING" "dists/$SUITE/Release.gpg" "dists/$SUITE/Release" 2>/dev/null \
+    || die "the new signatures do NOT verify with $KEYRING: do not publish"
+
+until=$(sed -n 's/^Valid-Until: //p' "dists/$SUITE/Release")
+echo
+echo "Signed. Packages in the index:"
+awk '/^Package:/ {p=$2} /^Version:/ {print "  " p " " $2}' "$bin/Packages"
+echo "Valid until: $until"
+echo "RE-SIGN BEFORE THAT DATE (this script, without packages), or apt reports this repository as expired."
+echo
+echo "Now check and publish it yourself:"
+echo "  git -C '$REPO' status && git -C '$REPO' diff --stat"
+echo "  git -C '$REPO' add -A && git -C '$REPO' commit -m 'Index signed until $until' && git -C '$REPO' push"

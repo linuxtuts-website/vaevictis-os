@@ -1,0 +1,15 @@
+Package: vaevictis-archive-keyring
+Version: 2026.10.13
+Architecture: all
+Maintainer: linuxtuts-website <292920559+linuxtuts-website@users.noreply.github.com>
+Section: misc
+Priority: optional
+Homepage: https://vaevictisos.org
+Description: key and settings of the VaeVictis APT repository
+ The public key that signs https://apt.linuxtuts.online, the source entry
+ for that repository, and an apt pin that lets it provide ONLY packages
+ named vaevictis-* (every other package keeps coming from Debian).
+ .
+ Removing this package ("apt purge vaevictis-archive-keyring") stops
+ trusting the repository. A new version of this package is how a renewed
+ or replaced key reaches every system.

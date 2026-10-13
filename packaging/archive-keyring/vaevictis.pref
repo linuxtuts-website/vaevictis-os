@@ -1,0 +1,9 @@
+# The VaeVictis repository may provide ONLY packages named vaevictis-*.
+# Anything else it offered (for example a "newer" copy of a Debian package) is never installed.
+Package: *
+Pin: origin apt.linuxtuts.online
+Pin-Priority: -1
+
+Package: vaevictis-*
+Pin: origin apt.linuxtuts.online
+Pin-Priority: 500

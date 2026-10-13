@@ -1,0 +1,8 @@
+# VaeVictis OS packages (signed; the index expires if it is not re-signed, see Valid-Until).
+# Only packages named vaevictis-* may come from here: see /etc/apt/preferences.d/vaevictis.
+# To stop trusting this repository: sudo apt purge vaevictis-archive-keyring
+Types: deb
+URIs: https://apt.linuxtuts.online
+Suites: vaevictis
+Components: main
+Signed-By: /usr/share/keyrings/vaevictis-archive-keyring.gpg

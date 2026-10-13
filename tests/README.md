@@ -12,3 +12,11 @@ Run on any Linux machine as root (they use network namespaces and never touch th
 
 wg-quick itself and its systemd sandbox, and the three programs on a real Wayland desktop with sound, need a real
 system: see the test list in the release kit.
+
+## APT repository (done for 1.1, not scripted here)
+
+`build/vv-apt-publish` was run with a throwaway key on a copy of `vaevictis-apt`: it added 1.1.1, re-signed with
+`Valid-Until`, refused a different file under the same version and a package not named `vaevictis-*`. Then Debian 13's apt,
+pointed at that copy (served as `apt.linuxtuts.online` on 127.0.0.1) with the pin of `vaevictis-archive-keyring`, chose
+`vaevictis-aurora` 1.1.1 at priority 500, gave a `bash` 99 offered by a hostile index priority -1 (never the candidate),
+and refused an index past its validity ("Release file ... is expired").
