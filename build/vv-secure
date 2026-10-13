@@ -144,6 +144,12 @@ else
     echo "  skipped: put vv-panic and vv-panic-action next to this script to install the panic button"
 fi
 
+echo "== boot menu password (GRUB): the installer sets it, vv-grub-password changes it"
+[ -f "$HERE/vv-grub-password" ] || die "vv-grub-password must be next to this script: the installer needs it"
+bak "$CH/usr/local/sbin/vv-grub-password"
+install -D -m 0755 "$HERE/vv-grub-password" "$CH/usr/local/sbin/vv-grub-password"
+echo "  /usr/local/sbin/vv-grub-password"
+
 echo "== file permissions (only root has any business reading these)"
 # dpkg-statoverride makes the mode survive package upgrades: without it, upgrading cron or ssh would reset it.
 PERMS_SCRIPT=$(cat <<'EOS'
@@ -175,7 +181,8 @@ Applied
   modules    dccp sctp rds tipc ax25 netrom rose cramfs freevxfs jffs2 firewire-core cannot load
   core dumps off (kernel, systemd, PAM limits)
   sleep      hibernation masked (it would write RAM to disk); normal suspend still works
-  panic      GUI as your user + a root helper allowed by one exact sudoers rule (not a root GUI)
+  panic      GUI as your user + a root helper allowed by one exact sudoers rule, administrators only (not a root GUI)
+  boot menu  vv-grub-password: the installer always sets a GRUB password (start without it; edit and console need it)
 These files live in the root file system, so a system installed from this ISO inherits them.
 Boot options (ipv6.disable, init_on_free, ...) belong to the live boot menu: see vv-iso.
 

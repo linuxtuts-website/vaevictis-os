@@ -54,6 +54,10 @@ for c in parted lsblk blkid rsync mkfs.ext4 mkfs.vfat mkswap wipefs partprobe ud
     command -v "$c" >/dev/null 2>&1 || die "Missing required command: $c"
 done
 
+# The boot menu password (always set, see below) is written by this tool, which the live system and the copy both have
+[ -x /usr/local/sbin/vv-grub-password ] \
+    || die "/usr/local/sbin/vv-grub-password is missing in this live system: the boot menu password could not be set."
+
 # The live system must have a kernel in /boot, otherwise GRUB cannot boot anything
 compgen -G "/boot/vmlinuz-*" >/dev/null \
     || die "No kernel found in /boot of the running system: the installed system would not boot."
@@ -90,10 +94,21 @@ mnt_in_use() { local m; for m in "${P_MNT[@]}"; do [ "$m" = "$1" ] && return 0; 
 
 # ---------------------------------------------------------------- disk
 log "Available disks:"
-lsblk -dpno NAME,SIZE,MODEL | grep -v -E 'loop|sr[0-9]' || true
+lsblk -dpno NAME,SIZE,TYPE,MODEL | awk '$3 == "disk"' || true
 echo
-read -rp "Enter destination device (e.g., /dev/sda): " DISK
-[ -b "$DISK" ] || die "Device '$DISK' does not exist."
+while true; do
+    read -rp "Enter destination disk (e.g., /dev/sda or /dev/nvme0n1): " DISK
+    [ -n "$DISK" ] || continue
+    [[ "$DISK" == /dev/* ]] || DISK="/dev/$DISK"
+    if [ ! -b "$DISK" ]; then echo "Device '$DISK' does not exist."; continue; fi
+    # A WHOLE disk only: a partition (sda2), a RAID or an encrypted volume would get a partition table written inside it.
+    DTYPE=$(lsblk -dno TYPE "$DISK" 2>/dev/null | head -1 | tr -d ' ')
+    if [ "$DTYPE" != disk ]; then
+        echo "'$DISK' is not a whole disk (it is: ${DTYPE:-unknown}). Enter the disk itself, e.g. /dev/sda, not one of its partitions."; continue
+    fi
+    if [ "$(lsblk -dno RO "$DISK" 2>/dev/null | tr -d ' ')" != 0 ]; then echo "'$DISK' is read-only."; continue; fi
+    break
+done
 if lsblk -nrpo LABEL "$DISK" 2>/dev/null | grep -qx 'VAEVICTIS'; then
     die "$DISK holds the VaeVictis installation medium (label VAEVICTIS): choose another disk."
 fi
@@ -168,12 +183,34 @@ pick_timezone() {
     done
 }
 pick_timezone
+# The passwords asked below are typed again at start: the disk passphrase with this layout, the boot menu password with
+# the US layout (GRUB knows no other). So THIS session must type with the chosen layout too, and the user must really
+# have that keyboard: the session is switched to it and a short typing check proves it.
+set_live_keyboard() {   # set_live_keyboard LAYOUT: the GNOME session of the live user types with LAYOUT from now on
+    local u="${SUDO_USER:-}" uid
+    [ -n "$u" ] && [ "$u" != root ] || return 1
+    uid=$(id -u "$u" 2>/dev/null) || return 1
+    [ -S "/run/user/$uid/bus" ] && command -v gsettings >/dev/null 2>&1 || return 1
+    runuser -u "$u" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+        gsettings set org.gnome.desktop.input-sources sources "[('xkb', '$1')]" 2>/dev/null
+}
 while true; do
     read -rp "Keyboard layout: it, us, gb, de, fr, es... [default: $KB_SUGGEST]: " KB_INPUT; KB_INPUT=${KB_INPUT:-$KB_SUGGEST}
     KB_INPUT="${KB_INPUT,,}"; [ "$KB_INPUT" = uk ] && KB_INPUT=gb        # the layout of the United Kingdom is called gb
-    [[ "$KB_INPUT" =~ ^[a-z]{2,10}$ ]] && [ -e "/usr/share/X11/xkb/symbols/$KB_INPUT" ] && break
-    echo "'$KB_INPUT' is not a keyboard layout on this system. Use the country code: it, us, gb, de, fr, es..."
+    if ! [[ "$KB_INPUT" =~ ^[a-z]{2,10}$ ]] || [ ! -e "/usr/share/X11/xkb/symbols/$KB_INPUT" ]; then
+        echo "'$KB_INPUT' is not a keyboard layout on this system. Use the country code: it, us, gb, de, fr, es..."; continue
+    fi
+    if set_live_keyboard "$KB_INPUT"; then
+        echo "This session now types with the '$KB_INPUT' layout too, so your passwords are typed exactly as at start."
+    else
+        echo "Set the keyboard of this session to '$KB_INPUT' (menu at the top right of the screen) before going on."
+    fi
+    read -rp "Keyboard check: looking at the labels on your keys, type   qwaz ym 159   and press Enter: " KB_TEST || KB_TEST=""
+    [ "$KB_TEST" = "qwaz ym 159" ] && break
+    echo "You typed '$KB_TEST': your keys do not match the '$KB_INPUT' layout. Enter the layout of YOUR keyboard."
 done
+GRUB_SAFE=$(/usr/local/sbin/vv-grub-password --safe-chars "$KB_INPUT")
+GRUB_DESC=$(/usr/local/sbin/vv-grub-password --describe "$KB_INPUT")
 while true; do
     read -rp "Hostname [default: vaevictis]: " NEW_HOSTNAME; NEW_HOSTNAME=${NEW_HOSTNAME:-vaevictis}
     [[ "$NEW_HOSTNAME" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] && break
@@ -200,43 +237,106 @@ if [ "$ENC" -eq 1 ]; then
 fi
 
 # ---------------------------------------------------------------- partition layout
+# Every size is checked against the space really left on the disk, which is shown before each question.
+used_mib() { local u=1 x; for x in "${P_SIZE[@]}"; do u=$((u + x)); done; echo "$u"; }   # 1 MiB before the first partition
+free_mib() { echo $(( DISK_MIB - 1 - $(used_mib) )); }                                    # 1 MiB at the end for the GPT copy
+show_free() { local f; f=$(free_mib); echo "   Free space left on $DISK: $f MiB (about $(( f / 1024 )) GiB)"; }
+read_mib() {   # read_mib VAR "prompt" default min max
+    local __v
+    while true; do
+        read_uint __v "$2" "$3"
+        if [ "$__v" -lt "$4" ]; then echo "At least $4 MiB, please."; continue; fi
+        if [ "$__v" -gt "$5" ]; then echo "Only $5 MiB can go here (the rest is needed for the system)."; continue; fi
+        printf -v "$1" '%s' "$__v"; return 0
+    done
+}
+
+# The root partition must hold the whole running system plus room for updates and logs.
+log "Measuring the system to copy (a few seconds)..."
+SYS_MIB=$(du -sxm / 2>/dev/null | awk '{print $1}') || true
+[[ "${SYS_MIB:-}" =~ ^[0-9]+$ ]] && [ "$SYS_MIB" -gt 0 ] || SYS_MIB=8192
+ROOT_MIN_MIB=$(( SYS_MIB + SYS_MIB / 10 + 2048 ))
+ROOT_MIN_GB=$(( (ROOT_MIN_MIB + 1023) / 1024 ))
+ROOT_MIN_MIB=$(( ROOT_MIN_GB * 1024 ))
+echo "The system takes $(( (SYS_MIB + 1023) / 1024 )) GiB: the root partition (/) needs at least $ROOT_MIN_GB GiB."
+NEED_MIB=$(( 100 + ROOT_MIN_MIB + 2 )); [ "$ENC" -eq 1 ] && NEED_MIB=$(( NEED_MIB + 1024 ))
+[ "$DISK_MIB" -ge "$NEED_MIB" ] \
+    || die "$DISK is too small: ${DISK_MIB} MiB, VaeVictis needs at least ${NEED_MIB} MiB ($(( (NEED_MIB + 1023) / 1024 )) GiB)."
+
 echo
+echo "Disk $DISK: ${DISK_MIB} MiB (about $(( DISK_MIB / 1024 )) GiB)."
 REST_TAKEN=0
+[ "$ENC" -eq 1 ] && BOOT_MIB=1024 || BOOT_MIB=0       # the separate /boot of an encrypted system, added below
 
 if [ "$EFI_MODE" -eq 1 ]; then
-    read_uint EFI_SIZE "EFI/boot partition size in MiB" 512
-    [ "$EFI_SIZE" -ge 100 ] || die "EFI partition must be at least 100 MiB."
+    max=$(( $(free_mib) - BOOT_MIB - ROOT_MIN_MIB ))
+    def=512; [ "$def" -le "$max" ] || def=$max
+    read_mib EFI_SIZE "EFI/boot partition size in MiB" "$def" 100 "$max"
     add_part /boot/efi "$EFI_SIZE" vfat ESP
 else
     echo "BIOS mode detected: a 1 MiB bios_grub partition will be created (GPT)."
     add_part - 1 biosgrub biosgrub
 fi
 
-[ "$ENC" -eq 1 ] && add_part /boot 1024 ext4 boot     # kernel + initramfs: GRUB reads this one before anything is unlocked
+[ "$ENC" -eq 1 ] && add_part /boot "$BOOT_MIB" ext4 boot     # kernel + initramfs: GRUB reads this one before anything is unlocked
 
-read_uint SWAP_SIZE "Swap size in MiB (0 for none)" 2048
+show_free
+max=$(( $(free_mib) - ROOT_MIN_MIB ))
+def=2048; [ "$def" -le "$max" ] || def=$max
+read_mib SWAP_SIZE "Swap size in MiB (0 for none)" "$def" 0 "$max"
 [ "$SWAP_SIZE" -gt 0 ] && add_part swap "$SWAP_SIZE" swap swap
 
-read_uint ROOT_GB "Root (/) partition size in GiB (0 = all remaining space)" 20
+show_free
+FREE_GB=$(( $(free_mib) / 1024 ))
+# 20 GiB for the system when a useful /home (10 GiB or more) still fits after it, otherwise all the space for /
+ROOT_DEF=20; [ "$ROOT_DEF" -ge "$ROOT_MIN_GB" ] || ROOT_DEF=$ROOT_MIN_GB
+[ $(( FREE_GB - ROOT_DEF )) -ge 10 ] || ROOT_DEF=0
+while true; do
+    read_uint ROOT_GB "Root (/) partition size in GiB, at least $ROOT_MIN_GB (0 = all remaining space)" "$ROOT_DEF"
+    if [ "$ROOT_GB" -eq 0 ]; then break; fi
+    if [ "$ROOT_GB" -lt "$ROOT_MIN_GB" ]; then echo "At least $ROOT_MIN_GB GiB: the system would not fit."; continue; fi
+    if [ $(( ROOT_GB * 1024 )) -gt "$(free_mib)" ]; then echo "Only $FREE_GB GiB are left."; continue; fi
+    break
+done
 if [ "$ROOT_GB" -eq 0 ]; then REST_TAKEN=1; add_part / 0 ext4 root
 else add_part / $((ROOT_GB * 1024)) ext4 root; fi
 
+# A mount point must be a clean absolute path, and not one of the directories the system itself lives in.
+valid_mount_point() {   # valid_mount_point PATH: empty output = good, otherwise the reason
+    local m="$1" c
+    [[ "$m" =~ ^/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] || { echo "use an absolute path made of letters, digits, '.', '_' and '-'"; return 0; }
+    IFS=/ read -ra _parts <<<"${m#/}"
+    for c in "${_parts[@]}"; do
+        case "$c" in .|..) echo "'.' and '..' are not allowed"; return 0 ;; esac
+    done
+    case "$m" in
+        /home) ;;                                                     # allowed (with the filesystem you choose)
+        /boot|/boot/*|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/run|/run/*|/etc|/etc/*|/root|/root/*|/lost+found|/cdrom|/cdrom/*|\
+        /bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib32|/lib32/*|/lib64|/lib64/*|/libx32|/libx32/*|/usr|/usr/bin*|/usr/sbin*|/usr/lib*|/usr/share*|/usr/include*|/var/lib/dpkg*)
+            echo "'$m' belongs to the system itself and must stay on /" ;;
+    esac
+}
+
 # Extra custom partitions
 while [ "$REST_TAKEN" -eq 0 ]; do
+    [ "$(free_mib)" -ge 1280 ] || break                              # less than about 1 GiB left: nothing useful fits
+    show_free
     read -rp "Add another custom partition (e.g., /var, /data)? [y/N]: " ADD_EXTRA
     case "${ADD_EXTRA,,}" in y|yes) ;; *) break ;; esac
 
     read -rp "Mount point (e.g., /data): " MNT_PT
     MNT_PT=${MNT_PT%/}
-    if ! [[ "$MNT_PT" =~ ^/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]]; then
-        echo "Invalid mount point (use an absolute path, no spaces)."; continue
-    fi
-    case "$MNT_PT" in
-        /boot/efi|/proc|/sys|/dev|/run) echo "'$MNT_PT' cannot be used here."; continue ;;
-    esac
+    why=$(valid_mount_point "$MNT_PT")
+    if [ -n "$why" ]; then echo "Invalid mount point: $why."; continue; fi
     if mnt_in_use "$MNT_PT"; then echo "'$MNT_PT' is already in the layout."; continue; fi
 
-    read_uint MNT_SIZE_GB "Size in GiB for $MNT_PT (0 = all remaining space)" 10
+    FREE_GB=$(( $(free_mib) / 1024 ))
+    while true; do
+        read_uint MNT_SIZE_GB "Size in GiB for $MNT_PT, up to $FREE_GB (0 = all remaining space)" 10
+        [ "$MNT_SIZE_GB" -eq 0 ] && break
+        [ "$MNT_SIZE_GB" -le "$FREE_GB" ] && break
+        echo "Only $FREE_GB GiB are left."
+    done
     while true; do
         read -rp "Filesystem for $MNT_PT (ext4/xfs/btrfs) [default: ext4]: " MNT_FS; MNT_FS=${MNT_FS:-ext4}
         case "$MNT_FS" in ext4|xfs|btrfs) command -v "mkfs.$MNT_FS" >/dev/null 2>&1 && break
@@ -251,22 +351,31 @@ done
 
 # /home
 if [ "$REST_TAKEN" -eq 0 ] && ! mnt_in_use /home; then
-    while true; do
-        read -rp "Home (/home) size in GiB [Enter = all remaining space, 'none' = no separate /home]: " HOME_GB
-        if [ -z "$HOME_GB" ]; then add_part /home 0 ext4 home; REST_TAKEN=1; break
-        elif [ "${HOME_GB,,}" = "none" ]; then break
-        elif [[ "$HOME_GB" =~ ^[0-9]+$ ]] && [ "$HOME_GB" -gt 0 ]; then
-            add_part /home $((HOME_GB * 1024)) ext4 home; break
-        else echo "Enter a positive number, nothing, or 'none'."; fi
-    done
+    if [ "$(free_mib)" -lt 1024 ]; then
+        echo "Less than 1 GiB is left: no separate /home, your files stay on /."
+    else
+        show_free
+        FREE_GB=$(( $(free_mib) / 1024 ))
+        while true; do
+            read -rp "Home (/home) size in GiB, up to $FREE_GB [Enter = all remaining space, 'none' = no separate /home]: " HOME_GB
+            if [ -z "$HOME_GB" ]; then add_part /home 0 ext4 home; REST_TAKEN=1; break
+            elif [ "${HOME_GB,,}" = "none" ]; then break
+            elif [[ "$HOME_GB" =~ ^[0-9]+$ ]] && [ "$HOME_GB" -gt 0 ] && [ "$HOME_GB" -le "$FREE_GB" ]; then
+                add_part /home $((HOME_GB * 1024)) ext4 home; break
+            else echo "Enter a number from 1 to $FREE_GB, nothing, or 'none'."; fi
+        done
+    fi
 fi
 
-# Size check
-USED=1; for s in "${P_SIZE[@]}"; do USED=$((USED + s)); done
+# Size check (the questions above already keep every size within the disk: this is the last safety net)
+USED=$(used_mib)
 LIMIT=$((DISK_MIB - 1))
 if [ "$REST_TAKEN" -eq 1 ]; then
     [ $((LIMIT - USED)) -ge 256 ] || die "Not enough space: the remaining partition would be < 256 MiB."
     REST_MIB=$((LIMIT - USED))
+    if [ "$ROOT_GB" -eq 0 ] && [ "$REST_MIB" -lt "$ROOT_MIN_MIB" ]; then
+        die "The root partition would get ${REST_MIB} MiB, the system needs ${ROOT_MIN_MIB} MiB."
+    fi
 else
     [ "$USED" -le "$LIMIT" ] || die "Layout (${USED} MiB) does not fit on $DISK (${DISK_MIB} MiB)."
     REST_MIB=0
@@ -308,6 +417,30 @@ if [ "$ENC" -eq 1 ]; then
     unset LP1 LP2
 fi
 
+# Boot menu password: always set. Without it anyone at the keyboard could change the start options of GRUB and get a
+# root shell that skips the login (after typing the disk passphrase, if the disk is encrypted).
+echo
+echo "Boot menu password (GRUB). VaeVictis starts normally WITHOUT it: it is asked only if someone tries to change"
+echo "the start options or open the GRUB console, which could otherwise skip your login. Username at the boot menu: grub"
+echo "Use a NEW password, not your login password or disk passphrase: its hash is kept on the unencrypted /boot."
+echo "The boot menu reads the keyboard as US English. With your keyboard ($KB_INPUT) you can use: $GRUB_DESC."
+echo "You can change it later with: sudo vv-grub-password"
+GRUB_PASS=""
+while true; do
+    read -rsp "Boot menu password (at least 8 characters): " GP1; echo
+    read -rsp "Confirm boot menu password: " GP2; echo
+    [ "${#GP1}" -ge 8 ] || { echo "Use at least 8 characters."; continue; }
+    [ "${#GP1}" -le 1000 ] || { echo "The boot menu reads at most 1000 characters."; continue; }
+    ok=1
+    for ((k = 0; k < ${#GP1}; k++)); do [[ "$GRUB_SAFE" == *"${GP1:k:1}"* ]] || { ok=0; break; }; done
+    [ "$ok" -eq 1 ] || { echo "It contains a character that the boot menu types differently. You can use: $GRUB_DESC."; continue; }
+    [ "$GP1" != "$PASS1" ] || { echo "Use a different password from your login password."; continue; }
+    [ "$ENC" -eq 0 ] || [ "$GP1" != "$LUKS_PASS" ] || { echo "Use a different password from the disk passphrase."; continue; }
+    [ "$GP1" = "$GP2" ] || { echo "Passwords do not match."; continue; }
+    GRUB_PASS="$GP1"; break
+done
+unset GP1 GP2
+
 # ---------------------------------------------------------------- summary + confirmation
 echo
 echo "================ INSTALLATION PLAN ================"
@@ -315,11 +448,13 @@ echo "Disk      : $DISK (${DISK_MIB} MiB) - $([ "$EFI_MODE" -eq 1 ] && echo UEFI
 echo "Hostname  : $NEW_HOSTNAME   User: $NEWUSER   TZ: $TZ_INPUT   Keyboard: $KB_INPUT"
 echo "Boot opts : $([ "$HARDEN" -eq 1 ] && echo "hardened ($HARDEN_OPTS)" || echo "standard")"
 echo "Encryption: $([ "$ENC" -eq 1 ] && echo "LUKS2 on everything except EFI and /boot; random-key swap; passphrase at every start" || echo "none")"
+echo "Boot menu : password set (user grub), asked only to change the start options"
 printf '%-4s %-16s %-10s %s\n' "N." "Mount" "FS" "Size"
 for i in "${!P_MNT[@]}"; do
     sz="${P_SIZE[$i]} MiB"; [ "${P_SIZE[$i]}" -eq 0 ] && sz="${REST_MIB} MiB (remaining)"
     printf '%-4s %-16s %-10s %s\n' "$((i + 1))" "${P_MNT[$i]}" "${P_FS[$i]}" "$sz"
 done
+[ "$REST_TAKEN" -eq 1 ] || echo "     (left unallocated: $(free_mib) MiB)"
 echo "==================================================="
 # Disk names (nvme0n1, nvme1n1, sda...) can swap between one boot and the next: show what is on the disk TODAY, so a
 # wrong disk is recognised at a glance (an existing Windows/Linux system, a data disk) before anything is erased.
@@ -341,6 +476,13 @@ for m in $(lsblk -nrpo NAME,TYPE "$DISK" | awk '$2=="crypt"{print $1}' | tac || 
     cryptsetup close "$m" 2>/dev/null || true
 done
 wipefs -a "$DISK" >/dev/null
+# Tell an SSD that all the old data is no longer needed (TRIM), so the files of the previous system are not left behind
+# readable in the free space. Best effort: most SSDs then return zeros, but this is not a certified secure erase.
+if [ "$(lsblk -dno DISC-MAX "$DISK" 2>/dev/null | tr -d ' ')" != "0B" ] && command -v blkdiscard >/dev/null 2>&1; then
+    log "Discarding the old contents of $DISK (TRIM)..."
+    if blkdiscard -f "$DISK" 2>/dev/null; then echo "Done: the disk was told to drop all its old data."
+    else echo "The disk did not accept it: old data stays in the free space until it is overwritten."; fi
+fi
 
 log "Partitioning $DISK..."
 parted -s "$DISK" mklabel gpt
@@ -391,6 +533,7 @@ if [ "$ENC" -eq 1 ]; then
         OPEN_MAPS+=("$name"); CRYPT_MAP[$i]="$name"
     done
 fi
+LUKS_PASS=""; unset LUKS_PASS                     # not needed any more: do not keep it in memory
 
 # ---------------------------------------------------------------- formatting
 log "Formatting filesystems..."
@@ -443,10 +586,16 @@ log "Generating /etc/fstab..."
         mnt=${entry%%$'\t'*}; idx=${entry##*$'\t'}
         uuid=$(blkid -s UUID -o value "$(fs_dev "$idx")")
         fs=${P_FS[$idx]}
-        if   [ "$mnt" = "/" ];         then opts="errors=remount-ro"; pass=1; [ "$fs" != ext4 ] && { opts="defaults"; pass=0; }
-        elif [ "$mnt" = "/boot/efi" ]; then opts="umask=0077";        pass=1
-        else opts="defaults"; pass=2; [ "$fs" != ext4 ] && pass=0
-        fi
+        # nosuid: setuid programs placed there get no extra rights; nodev: no device files; noexec: nothing runs from there
+        case "$mnt" in
+            /)         opts="errors=remount-ro"; pass=1; [ "$fs" != ext4 ] && { opts="defaults"; pass=0; } ;;
+            /boot/efi) opts="umask=0077,nosuid,nodev,noexec"; pass=1 ;;
+            /boot)     opts="defaults,nosuid,nodev,noexec"; pass=2 ;;
+            /var/tmp)  opts="defaults,nosuid,nodev"; pass=2 ;;
+            /var|/var/*|/opt|/opt/*|/usr|/usr/*) opts="defaults"; pass=2 ;;   # may hold programs that need them
+            *)         opts="defaults,nosuid,nodev"; pass=2 ;;                  # /home, /tmp, /srv, data partitions
+        esac
+        [ "$mnt" = / ] || [ "$fs" = ext4 ] || [ "$fs" = vfat ] || pass=0
         echo "UUID=$uuid  $mnt  $fs  $opts  0  $pass"
     done
     for i in "${!P_MNT[@]}"; do
@@ -591,6 +740,8 @@ scrub_live_artifacts() {
     fi
     # 7. Root's home: leftovers of the build and of the live session
     find "$TARGET/root" -mindepth 1 -maxdepth 1 ! -name .bashrc ! -name .profile -exec rm -rf {} + 2>/dev/null || true
+    # 8. The "Install VaeVictis OS" launchers: the installer only works from the live session
+    rm -f "$TARGET/etc/skel/Desktop/vaevictis_install.desktop" "$TARGET/usr/share/applications/vaevictis_install.desktop"
 }
 scrub_live_artifacts
 
@@ -727,10 +878,22 @@ fi
 chroot "$TARGET" env VV_NO_UPDATE=1 /usr/local/sbin/vv-grub-theme \
     || warn "GRUB theme not installed: the boot menu will use GRUB's plain look."
 
+# Boot menu password (asked above): /etc/grub.d/01_vaevictis_password, picked up by update-grub below
+log "Setting the boot menu password..."
+printf '%s\n' "$GRUB_PASS" | chroot "$TARGET" /usr/local/sbin/vv-grub-password --stdin --layout "$KB_INPUT" --no-update \
+    || die "the boot menu password could not be written."
+GRUB_PASS=""; unset GRUB_PASS
+
 log "Generating GRUB configuration..."
 chroot "$TARGET" update-grub
 grep -q "menuentry" "$TARGET/boot/grub/grub.cfg" && grep -q "root=" "$TARGET/boot/grub/grub.cfg" \
     || die "grub.cfg has no valid Linux entry: the system would not boot."
+# The password must be in the menu, and every entry must still start without it
+grep -q '^password_pbkdf2 grub grub\.pbkdf2\.sha512\.' "$TARGET/boot/grub/grub.cfg" \
+    && grep -q -- '--unrestricted' "$TARGET/boot/grub/grub.cfg" \
+    || die "grub.cfg does not contain the boot menu password: refusing to finish."
+chmod 0600 "$TARGET/boot/grub/grub.cfg"
+echo "Boot menu password: active (user grub)."
 echo "GRUB entries:"; grep -E "^menuentry" "$TARGET/boot/grub/grub.cfg" | cut -d"'" -f2 | sed 's/^/   - /'
 
 # ---------------------------------------------------------------- done
@@ -742,4 +905,5 @@ close_crypt
 echo -e "\n=========================================================="
 echo "  INSTALLATION COMPLETE. Remove the install media and reboot."
 [ "$ENC" -eq 0 ] || echo "  At start you will be asked for the ENCRYPTION passphrase, then for your user password."
+echo "  The boot menu password (user grub) is needed only to change the start options."
 echo "=========================================================="
