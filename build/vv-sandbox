@@ -1,0 +1,152 @@
+#!/bin/bash
+# vv-sandbox - start a VaeVictis program that opens files from anywhere (PDFs, music, images) in a bubblewrap sandbox,
+# the same isolation Flatpak uses. A malicious file that exploited a bug in MuPDF, FFmpeg, Qt or Tk would be shut in:
+#
+#   - no network at all (own network namespace with only "lo"): nothing can be sent anywhere;
+#   - the system is read-only, /tmp and /run are private and empty, other programs' sockets are not there;
+#   - the home folder is read-only, except the usual data folders (Desktop, Documents, Downloads, Music, Pictures,
+#     Videos, Public, Templates), the program's own settings folder and the folder of a file it was asked to open;
+#     so nothing can be planted where programs start from at login (.bashrc, .profile, autostart, .local/bin ...);
+#   - secrets in the home folder are hidden: SSH and GPG keys, keyrings, password stores, browser and mail profiles;
+#   - USB disks (/media, /run/media) and /mnt stay usable;
+#   - D-Bus only through a filter that allows exactly what the program needs (or no D-Bus at all);
+#   - the screen only through Wayland, where a program sees nothing of the others (LinPaint+ needs X11: Tk has no
+#     Wayland support).
+#
+#   vv-sandbox PROFILE PROGRAM [FILES...]      PROFILE: vv-pdf, aurora or linpaint
+#
+# VV_NO_SANDBOX=1 starts the program without the sandbox (only to find out whether the sandbox is what breaks it).
+set -uo pipefail
+
+die() {
+    echo "vv-sandbox: $*" >&2
+    if [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ] && command -v zenity >/dev/null 2>&1; then
+        zenity --error --title="VaeVictis" --text="$*" --width=420 >/dev/null 2>&1 &
+    fi
+    exit 1
+}
+
+[ $# -ge 2 ] || die "usage: vv-sandbox PROFILE PROGRAM [FILES...]"
+profile="$1"; prog="$2"; shift 2
+case "$profile" in vv-pdf|aurora|linpaint) ;; *) die "unknown profile: $profile" ;; esac
+[ -x "$prog" ] || die "$prog is missing."
+[ "$(id -u)" -ne 0 ] || die "$profile does not run as root."
+
+if [ "${VV_NO_SANDBOX:-}" = 1 ]; then
+    echo "vv-sandbox: VV_NO_SANDBOX=1, starting $profile WITHOUT its sandbox" >&2
+    exec "$prog" "$@"
+fi
+command -v bwrap >/dev/null 2>&1 || die "bubblewrap is missing: $profile is not started without its sandbox (sudo apt install bubblewrap)."
+
+uid=$(id -u)
+HOME="${HOME:-$(getent passwd "$uid" | cut -d: -f6)}"
+HOME="$(realpath -e -- "$HOME")" || die "home folder not found"
+rt="${XDG_RUNTIME_DIR:-/run/user/$uid}"
+[ -d "$rt" ] && [ -O "$rt" ] || die "runtime folder $rt not found"
+
+args=(--die-with-parent --new-session
+      --unshare-user --disable-userns --unshare-ipc --unshare-pid --unshare-net --unshare-uts --unshare-cgroup-try
+      --ro-bind / /
+      --dev /dev --dev-bind-try /dev/dri /dev/dri
+      --proc /proc
+      --tmpfs /tmp --tmpfs /var/tmp
+      --tmpfs /run --perms 0700 --dir "$rt"
+      --ro-bind "$HOME" "$HOME"
+      --bind-try /media /media --bind-try /run/media /run/media --bind-try /mnt /mnt
+      --setenv XDG_RUNTIME_DIR "$rt" --setenv HOME "$HOME" --setenv NO_AT_BRIDGE 1
+      --unsetenv SSH_AUTH_SOCK --unsetenv GPG_AGENT_INFO --unsetenv SESSION_MANAGER --unsetenv DBUS_SESSION_BUS_ADDRESS)
+
+rw() { [ -e "$1" ] && args+=(--bind "$1" "$1"); }        # writable (only what already exists)
+
+# Writable: the usual data folders, as the user named them (xdg-user-dirs) and with their default names
+declare -A seen=()
+for d in DESKTOP DOCUMENTS DOWNLOAD MUSIC PICTURES VIDEOS PUBLICSHARE TEMPLATES \
+         Desktop Documents Downloads Music Pictures Videos Public Templates; do
+    case "$d" in [A-Z]*[A-Z]) p=$(xdg-user-dir "$d" 2>/dev/null) || p="" ;; *) p="$HOME/$d" ;; esac
+    [ -n "$p" ] && [ "$p" != "$HOME" ] && [ -d "$p" ] || continue
+    p=$(realpath -e -- "$p") || continue
+    case "$p/" in "$HOME"/.*) continue ;; esac                         # never a hidden folder
+    [ -n "${seen[$p]:-}" ] || { seen[$p]=1; rw "$p"; }
+done
+# ... the program's own settings ...
+case "$profile" in
+    vv-pdf)   own="$HOME/.config/VaeVictis" ;;
+    aurora)   own="$HOME/.aurora" ;;
+    linpaint) own="$HOME/.config/linpaint" ;;
+esac
+mkdir -p "$(dirname "$own")" && { [ -d "$own" ] || mkdir -m 0700 "$own"; } && rw "$own"
+# ... and the folder of each file it was asked to open, if it is a normal folder of the home; otherwise the file alone
+# (never a hidden folder, never the home itself, never a shared folder such as /tmp, full of other programs' sockets)
+for f in "$@"; do
+    [ -e "$f" ] || continue
+    f=$(realpath -e -- "$f") || continue
+    dir=$(dirname "$f")
+    case "$dir/" in
+        "$HOME"/.*|*/.*/*)            args+=(--ro-bind "$f" "$f") ;;    # inside a hidden folder: read only
+        "$HOME"/*/*)                  rw "$dir" ;;
+        /media/*|/run/media/*|/mnt/*) ;;                                 # already writable
+        *)                            if [ -w "$f" ]; then rw "$f"; else args+=(--ro-bind "$f" "$f"); fi ;;
+    esac
+done
+
+# Secrets in the home folder: hidden behind an empty folder (or an empty file)
+for s in .ssh .gnupg .local/share/keyrings .password-store .mozilla .thunderbird .config/chromium \
+         .config/google-chrome .config/BraveSoftware .config/keepassxc .local/share/keepassxc .config/Signal \
+         .config/Element .var .aws .kube .docker .config/gh .config/rclone .pki .cert .local/share/evolution \
+         .config/evolution .config/libvirt .local/share/libvirt .bash_history .netrc .git-credentials \
+         .config/git/credentials .Xauthority .ICEauthority; do
+    p="$HOME/$s"
+    if [ -d "$p" ] && [ ! -L "$p" ]; then args+=(--tmpfs "$p")
+    elif [ -f "$p" ] && [ ! -L "$p" ]; then args+=(--ro-bind /dev/null "$p"); fi
+done
+
+# The screen. Wayland when the session has it: a Wayland program sees nothing of the other windows.
+wl="${WAYLAND_DISPLAY:-}"
+[ -n "$wl" ] && [ "${wl#/}" = "$wl" ] && wl="$rt/$wl"
+want_x11=0
+[ "$profile" = linpaint ] && want_x11=1                                   # Tk: X11 only (through Xwayland)
+[ -n "$wl" ] && [ -S "$wl" ] || want_x11=1                               # an X11 session
+if [ -n "$wl" ] && [ -S "$wl" ]; then
+    args+=(--bind "$wl" "$rt/wayland-0" --setenv WAYLAND_DISPLAY wayland-0)
+    [ "$profile" = linpaint ] || args+=(--setenv QT_QPA_PLATFORM wayland --unsetenv DISPLAY --unsetenv XAUTHORITY)
+fi
+if [ "$want_x11" -eq 1 ]; then
+    n="${DISPLAY:-}"; n="${n#*:}"; n="${n%%.*}"
+    [[ "$n" =~ ^[0-9]+$ ]] && [ -S "/tmp/.X11-unix/X$n" ] || die "no display to show $profile on."
+    args+=(--bind "/tmp/.X11-unix/X$n" "/tmp/.X11-unix/X$n")
+    if [ -n "${XAUTHORITY:-}" ] && [ -f "$XAUTHORITY" ]; then
+        args+=(--ro-bind "$XAUTHORITY" "$rt/Xauthority" --setenv XAUTHORITY "$rt/Xauthority")
+    fi
+fi
+
+# Sound (Aurora): the PulseAudio socket of PipeWire
+if [ "$profile" = aurora ] && [ -S "$rt/pulse/native" ]; then
+    args+=(--bind "$rt/pulse/native" "$rt/pulse/native" --setenv PULSE_SERVER "unix:$rt/pulse/native")
+fi
+# Aurora's single-instance socket: shared by its sandboxes, so a second start reaches the running player
+if [ "$profile" = aurora ]; then
+    { [ -d "$rt/vv-sandbox-aurora" ] || mkdir -m 0700 "$rt/vv-sandbox-aurora"; } && args+=(--bind "$rt/vv-sandbox-aurora" "$rt/vv-sandbox-aurora"
+                                                        --setenv AURORA_RUNTIME_DIR "$rt/vv-sandbox-aurora")
+fi
+
+# D-Bus through a filter: Aurora may only show notifications, LinPaint+ may only ask for a screenshot
+proxy_pid=""; proxy_dir=""
+cleanup() { [ -n "$proxy_pid" ] && kill "$proxy_pid" 2>/dev/null; [ -n "$proxy_dir" ] && rm -rf "$proxy_dir"; }
+trap cleanup EXIT
+rules=()
+case "$profile" in
+    aurora)   rules=(--talk=org.freedesktop.Notifications) ;;
+    linpaint) rules=("--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Screenshot.Screenshot@/org/freedesktop/portal/desktop"
+                     "--broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.Request.Response@/org/freedesktop/portal/desktop/request/*") ;;
+esac
+bus="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
+if [ "${#rules[@]}" -gt 0 ] && command -v xdg-dbus-proxy >/dev/null 2>&1; then
+    proxy_dir=$(mktemp -d "$rt/vv-sandbox-bus.XXXXXX") || die "cannot create the D-Bus filter"
+    xdg-dbus-proxy "$bus" "$proxy_dir/bus" --filter "${rules[@]}" &
+    proxy_pid=$!
+    for _ in $(seq 1 100); do [ -S "$proxy_dir/bus" ] && break; sleep 0.05; done
+    [ -S "$proxy_dir/bus" ] || die "the D-Bus filter did not start"
+    args+=(--bind "$proxy_dir/bus" "$rt/bus" --setenv DBUS_SESSION_BUS_ADDRESS "unix:path=$rt/bus")
+fi
+
+bwrap "${args[@]}" -- "$prog" "$@"

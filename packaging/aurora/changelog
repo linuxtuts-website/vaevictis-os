@@ -4,6 +4,12 @@ vaevictis-aurora (1.1.1) unstable; urgency=medium
     escaped before they are shown or sent to the desktop notification, so a
     file's tags can never inject formatting or links.
   * The duration fallback (ffprobe) always receives an absolute path.
+  * Single instance: the answer to a second start goes to a socket file
+    next to the player's own (not an abstract socket name, which anyone
+    could take first and which does not reach across two sandboxes);
+    AURORA_RUNTIME_DIR, set by the VaeVictis sandbox, chooses that folder.
+  * Starting no longer fails when the home folder is read-only (as in the
+    VaeVictis sandbox): the optional launcher in ~/.local is best effort.
 
  -- linuxtuts-website <292920559+linuxtuts-website@users.noreply.github.com>  Tue, 13 Oct 2026 10:00:00 +0200
 

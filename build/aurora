@@ -14,6 +14,7 @@ import time
 import socket
 import fcntl
 import html
+import re
 import subprocess
 from pathlib import Path
 from datetime import timedelta
@@ -508,14 +509,16 @@ class Aurora(QMainWindow):
 
     def _handle_ipc(self):
         try:
-            data, _ = self.lock_socket.recvfrom(4096)
+            data, sender = self.lock_socket.recvfrom(4096)
             msg = data.decode('utf-8')
             if msg.startswith(RAISE_PREFIX):
-                # a second launch asks us to show ourselves, and waits for the answer
+                # a second launch asks us to show ourselves, and waits for the answer on its own socket file,
+                # which must be next to ours (never an address chosen by someone else)
                 self.showNormal()
                 self.raise_()
                 self.activateWindow()
-                self.lock_socket.sendto(b'OK', '\0' + msg[len(RAISE_PREFIX):])
+                if isinstance(sender, str) and is_reply_path(sender):
+                    self.lock_socket.sendto(b'OK', sender)
             elif os.path.exists(msg):
                 self.open_external_file(msg)
         except Exception:
@@ -1129,8 +1132,15 @@ class Aurora(QMainWindow):
             self.table.setCellWidget(row_idx, 3, action_btn)
 
 def setup_desktop_integration():
+    """Best effort: never stops Aurora (in the VaeVictis sandbox the home folder is read-only here)."""
+    try:
+        _setup_desktop_integration()
+    except OSError:
+        pass
+
+
+def _setup_desktop_integration():
     desktop_dir = Path.home() / ".local" / "share" / "applications"
-    desktop_dir.mkdir(parents=True, exist_ok=True)
     desktop_file = desktop_dir / "aurora.desktop"
 
     # VaeVictis ships its own launcher (aurora.desktop in /usr/share/applications) with the right icon, vv-aurora.
@@ -1149,6 +1159,7 @@ def setup_desktop_integration():
         return
 
     if not desktop_file.exists():
+        desktop_dir.mkdir(parents=True, exist_ok=True)
         python_exec = sys.executable
         script_path = os.path.abspath(__file__)
         
@@ -1170,38 +1181,57 @@ MimeType=audio/mpeg;audio/x-flac;audio/flac;audio/ogg;audio/x-wav;
             pass
 
 RAISE_PREFIX = '\x01RAISE '
+REPLY_RE = re.compile(r'aurora-reply-\d+-\d+\.sock')
 
 
 def ipc_paths():
     """One lock file and one socket file per user, in the runtime directory. The lock is a flock on the file:
     the kernel drops it the moment the process dies, so a crashed Aurora can never leave a stale 'already running'
     behind (the old abstract-socket name could be left occupied with no owner)."""
-    d = os.environ.get('XDG_RUNTIME_DIR')
+    # AURORA_RUNTIME_DIR: set by the VaeVictis sandbox, a folder shared by every sandboxed Aurora of this user
+    d = os.environ.get('AURORA_RUNTIME_DIR') or os.environ.get('XDG_RUNTIME_DIR')
     if not d or not os.path.isdir(d):
         d = '/tmp'
     base = os.path.join(d, 'aurora-%d' % os.getuid())
     return base + '.lock', base + '.sock'
 
 
+def is_reply_path(path):
+    """A reply socket of a second Aurora: a file named aurora-reply-UID-PID.sock in our own IPC folder."""
+    return (os.path.dirname(path) == os.path.dirname(ipc_paths()[1])
+            and REPLY_RE.fullmatch(os.path.basename(path)) is not None)
+
+
 def already_running(files_to_open):
     """Called by a second launch: ask the running Aurora to show itself and wait for its answer.
     A silent exit looked exactly like "Aurora does not start", so say what happened."""
     sock_path = ipc_paths()[1]
-    reply_name = 'aurora_reply_%d' % os.getpid()
+    # The answer comes back to a socket FILE next to the running player's: an abstract socket name would not
+    # reach across two sandboxes (each has its own network namespace) and anyone could take it first.
+    reply_path = os.path.join(os.path.dirname(sock_path), 'aurora-reply-%d-%d.sock' % (os.getuid(), os.getpid()))
     reply = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-    reply.bind('\0' + reply_name)
-    reply.settimeout(2.0)
-    out = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
     try:
-        out.sendto((RAISE_PREFIX + reply_name).encode('utf-8'), sock_path)
+        os.unlink(reply_path)
+    except FileNotFoundError:
+        pass
+    reply.bind(reply_path)
+    os.chmod(reply_path, 0o600)
+    reply.settimeout(2.0)
+    try:
         for f in files_to_open:
             if os.path.exists(f):
-                out.sendto(f.encode('utf-8'), sock_path)
+                reply.sendto(os.path.abspath(f).encode('utf-8'), sock_path)
+        reply.sendto((RAISE_PREFIX + 'reply').encode('utf-8'), sock_path)
         reply.recvfrom(64)
     except (socket.timeout, OSError):
         print("Aurora is already running but does not answer: that copy is stuck.\n"
               "Close it with:  pkill -f aurora   and start Aurora again.", file=sys.stderr)
         return 1
+    finally:
+        try:
+            os.unlink(reply_path)
+        except OSError:
+            pass
     print("Aurora is already running: brought to the front.", file=sys.stderr)
     return 0
 

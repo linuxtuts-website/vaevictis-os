@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# vv-apps - installs VaeVictis's own programs into the chroot from the files of this repository, so that every one of
+# their files in the image comes from a script (nothing copied by hand):
+#
+#   Aurora (package vaevictis-aurora, built first with packaging/aurora/build.sh), VaeVictis PDF and LinPaint+:
+#     they open files that come from anywhere, so each one always starts in its sandbox (vv-sandbox: no network,
+#     system and home read-only except the data folders, secrets hidden, D-Bus filtered)
+#   v-snap, the VPN manager, the installer, and their launchers (menu, and desktop of new users)
+#   apt: no recommended or suggested packages unless asked (/etc/apt/apt.conf.d/99-vaevictis-no-bloat)
+#
+#   vv-apps        apply (safe to repeat; replaced files are backed up next to the chroot)
+#
+# Run it after vv-secure and vv-harden, before vv-branding (which gives the launchers their icons).
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
+CH="${VV_CHROOT:-/run/media/user/Mio/Backup_VaeVictis_Completo/vaevictis/new/chroot}"
+CH="$(realpath -m "$CH")"
+VVC="$HERE/vv-chroot"
+
+die() { echo "vv-apps: $*" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || exec sudo -E VV_CHROOT="$CH" "$0" "$@"
+[ -f "$CH/etc/debian_version" ] && [ "$CH" != "/" ] || die "not a Debian root filesystem: $CH"
+[ -x "$VVC" ] || die "vv-chroot must be next to this script ($VVC)"
+
+for f in vv-sandbox vv-pdf.py vv-pdf.desktop linpaint.py linpaint.desktop v-snap vaevictis_install.sh \
+         vaevictis_install.desktop vv-vpn vv-vpn-helper org.vaevictis.vpn.policy vv-vpn.desktop; do
+    [ -f "$HERE/$f" ] || die "missing next to this script: $f"
+done
+AURORA_VER=$(sed -n 's/^Version: //p' "$ROOT/packaging/aurora/control")
+DEB="$ROOT/dist/vaevictis-aurora_${AURORA_VER}_all.deb"
+[ -f "$DEB" ] || die "$DEB not found: build it first with  packaging/aurora/build.sh  (from the repository root)"
+
+BK="$(dirname "$CH")/vv-backups/$(date +%Y%m%d-%H%M%S)"
+bak() { local rel="${1#$CH/}"; [ -e "$1" ] || return 0; mkdir -p "$BK"; (cd "$CH" && cp -a --parents "$rel" "$BK/"); }
+inst() {   # inst MODE SOURCE DEST-in-the-chroot
+    bak "$CH/$3"; install -D -m "$1" "$2" "$CH/$3"; echo "  /$3"
+}
+put() {    # put MODE DEST-in-the-chroot   (content on stdin)
+    install -d -m 0755 "$(dirname "$CH/$2")"; bak "$CH/$2"; cat > "$CH/$2"; chmod "$1" "$CH/$2"; echo "  /$2"
+}
+wrapper() {   # wrapper NAME PROFILE PROGRAM DESCRIPTION
+    put 0755 "usr/local/bin/$1" <<EOF
+#!/bin/sh
+# $4, always started in its sandbox (see /usr/local/libexec/vv-sandbox)
+exec /usr/local/libexec/vv-sandbox $2 $3 "\$@"
+EOF
+}
+
+echo "== tools the sandbox needs"
+"$VVC" run /bin/sh -c 'for c in bwrap xdg-dbus-proxy xdg-user-dir; do command -v $c >/dev/null || { echo "  MISSING: $c"; exit 1; }; done; echo "  bwrap, xdg-dbus-proxy, xdg-user-dir: present"' \
+    || die "install bubblewrap, xdg-dbus-proxy and xdg-user-dirs in the chroot first:  ./vv-chroot run apt-get install bubblewrap xdg-dbus-proxy xdg-user-dirs"
+
+echo "== sandbox"
+inst 0755 "$HERE/vv-sandbox" usr/local/libexec/vv-sandbox
+
+echo "== Aurora $AURORA_VER (package)"
+cp "$DEB" "$CH/tmp/vv-aurora.deb"
+"$VVC" run dpkg -i /tmp/vv-aurora.deb || { rm -f "$CH/tmp/vv-aurora.deb"; die "dpkg could not install $DEB"; }
+rm -f "$CH/tmp/vv-aurora.deb"
+wrapper aurora aurora /usr/bin/aurora "Aurora music player"
+# the menu entry starts the sandboxed one, whatever PATH says (this folder comes before /usr/share)
+put 0644 usr/local/share/applications/aurora.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Aurora
+Comment=Music player
+Exec=/usr/local/bin/aurora %F
+Icon=vv-aurora
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;audio;player;spectrum;
+EOF
+
+echo "== VaeVictis PDF and LinPaint+"
+inst 0755 "$HERE/vv-pdf.py"   usr/local/lib/vaevictis/vv-pdf
+inst 0755 "$HERE/linpaint.py" usr/local/lib/vaevictis/linpaint
+wrapper vv-pdf   vv-pdf   /usr/local/lib/vaevictis/vv-pdf   "VaeVictis PDF"
+wrapper linpaint linpaint /usr/local/lib/vaevictis/linpaint "LinPaint+"
+inst 0644 "$HERE/vv-pdf.desktop"   usr/share/applications/vv-pdf.desktop
+inst 0644 "$HERE/linpaint.desktop" usr/share/applications/linpaint.desktop
+
+echo "== v-snap"
+inst 0755 "$HERE/v-snap" usr/local/bin/v-snap
+for dest in usr/share/applications/v-snap.desktop etc/skel/Desktop/v-snap.desktop; do
+    mode=0644; [ "${dest#etc/skel}" != "$dest" ] && mode=0755
+    put "$mode" "$dest" <<'EOF'
+[Desktop Entry]
+Name=VaeVictis Snap
+Comment=System Backup & Restore
+Exec=bash -c "sudo /usr/local/bin/v-snap; echo -e '\n[Press Enter to close]'; read"
+Icon=vv-snap
+Terminal=true
+Type=Application
+Categories=System;Utility;
+EOF
+done
+
+echo "== VPN manager"
+inst 0755 "$HERE/vv-vpn"                  usr/local/bin/vv-vpn
+inst 0755 "$HERE/vv-vpn-helper"           usr/local/libexec/vv-vpn-helper
+inst 0644 "$HERE/org.vaevictis.vpn.policy" usr/share/polkit-1/actions/org.vaevictis.vpn.policy
+inst 0644 "$HERE/vv-vpn.desktop"          usr/share/applications/vv-vpn.desktop
+inst 0755 "$HERE/vv-vpn.desktop"          etc/skel/Desktop/vv-vpn.desktop
+install -d -m 0755 "$CH/var/lib/vv-vpn"
+install -d -m 0700 "$CH/etc/wireguard"
+
+echo "== installer"
+inst 0755 "$HERE/vaevictis_install.sh"      usr/local/bin/vaevictis_install.sh
+inst 0644 "$HERE/vaevictis_install.desktop" usr/share/applications/vaevictis_install.desktop
+inst 0644 "$HERE/vaevictis_install.desktop" etc/skel/Desktop/vaevictis_install.desktop
+
+echo "== apt"
+put 0644 etc/apt/apt.conf.d/99-vaevictis-no-bloat <<'EOF'
+// VaeVictis (generated by vv-apps): install only what is asked for. Fewer packages, fewer programs that can have bugs.
+APT::Install-Recommends "false";
+APT::Install-Suggests "false";
+EOF
+
+echo "== inside the chroot: libraries the programs import"
+"$VVC" run /bin/sh -c '
+python3 -c "import fitz, PyQt6.QtWidgets" 2>/dev/null && echo "  VaeVictis PDF: PyMuPDF, PyQt6 ok" || echo "  WARNING: VaeVictis PDF needs python3-pymupdf and python3-pyqt6"
+python3 -c "import PyQt6.QtMultimedia, mutagen" 2>/dev/null && echo "  Aurora: PyQt6 multimedia, mutagen ok" || echo "  WARNING: Aurora needs python3-pyqt6.qtmultimedia and python3-mutagen"
+python3 -c "import tkinter, PIL.ImageTk" 2>/dev/null && echo "  LinPaint+: Tk, Pillow ok" || echo "  WARNING: LinPaint+ needs python3-tk and python3-pil.imagetk"
+command -v update-desktop-database >/dev/null && update-desktop-database -q /usr/share/applications /usr/local/share/applications || true
+'
+
+cat <<EOF
+
+Done. Backups of replaced files: $BK (only if something was replaced)
+Next: ./vv-branding (icons of the launchers), then the rest of docs/BUILDING.md.
+EOF
