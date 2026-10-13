@@ -12,8 +12,9 @@ response time, but reports are read and answered.
 
 ## Scope
 
-In scope: the scripts and programs in this repository (installer, `vv-*` tools, HIDS, VPN manager and its privileged helper,
-firewall rules and hardening settings), and mistakes in how the ISO is assembled (for example a file that should not be in the image).
+In scope: the scripts and programs in this repository (installer, `vv-*` tools, VPN manager and its privileged helper, the
+sandbox of the desktop programs, `v-snap`, the boot menu password, the APT repository and its packages, firewall rules and
+hardening settings), and mistakes in how the ISO is assembled (for example a file that should not be in the image).
 
 Out of scope: vulnerabilities in Debian packages themselves (report them to Debian), attacks that need an already-compromised root, and
 the documented limits in [THREAT-MODEL.md](THREAT-MODEL.md).

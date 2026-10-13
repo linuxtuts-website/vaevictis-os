@@ -8,16 +8,27 @@ the way to install the system the first time.
 
 ## The VaeVictis programs: a signed APT repository
 
-The VaeVictis programs (Aurora, LinPaint+, VaeVictis PDF, the `vv-*` tools, the HIDS) are not in Debian's archive, so by default
-`apt` does not know them. In release 1.0 they are plain files copied into the image.
-
-They are being turned into ordinary Debian packages (`.deb`), one at a time, and published in a **signed APT repository**:
+The VaeVictis programs (Aurora, LinPaint+, VaeVictis PDF, the `vv-*` tools) are not in Debian's archive. They are being turned
+into ordinary Debian packages (`.deb`), one at a time, and published in a **signed APT repository**:
 <https://apt.linuxtuts.online/> (the files are in [`vaevictis-apt`](https://github.com/linuxtuts-website/vaevictis-apt)).
-Today it holds **Aurora 1.1.0** (`vaevictis-aurora`). It is something you add yourself, on purpose, and it is never switched on
-behind your back.
+Today it holds **Aurora** (`vaevictis-aurora`) and the repository's own key package (`vaevictis-archive-keyring`).
 
-**1. Download the key and check its fingerprint** (compare it with the one printed here, in the `vaevictis-apt` README and on the
-[project page](https://linuxtuts.online/vaevictis/vaevictis.html)):
+### From 1.1: already configured
+
+A system installed from the 1.1 ISO has the package `vaevictis-archive-keyring`, which holds the key, the source entry and a pin:
+
+- the repository may provide **only packages named `vaevictis-*`**: anything else it offered (for example a "newer" copy of a
+  Debian package) is never installed (`/etc/apt/preferences.d/vaevictis`);
+- its index is signed with the key `0A41 158C 1DD6 718D 3D3F  FED0 6848 6B39 B2A9 9993` and carries an **expiry date**: an old
+  index cannot be served again to hide a newer fixed package;
+- `sudo apt update && sudo apt upgrade` updates these programs together with the rest of the system; they are not installed
+  automatically in the background (only Debian's security updates are).
+
+To stop trusting it: `sudo apt purge vaevictis-archive-keyring`. Check what apt would take from where: `apt policy vaevictis-aurora`.
+
+### On 1.0 / 1.0.1: add it yourself
+
+**1. Download the key and check its fingerprint** (compare it with the one printed here and in the `vaevictis-apt` README):
 
 ```bash
 sudo install -d -m 0755 /etc/apt/keyrings
@@ -29,10 +40,10 @@ gpg --show-keys --with-fingerprint /etc/apt/keyrings/vaevictis.gpg
 0A41 158C 1DD6 718D 3D3F  FED0 6848 6B39 B2A9 9993
 ```
 
-**2. Add the repository and install:**
+**2. Add the repository for a moment, install its key package, then let the package take over:**
 
 ```bash
-sudo tee /etc/apt/sources.list.d/vaevictis.sources >/dev/null <<'EOF'
+sudo tee /etc/apt/sources.list.d/vaevictis-bootstrap.sources >/dev/null <<'EOF'
 Types: deb
 URIs: https://apt.linuxtuts.online
 Suites: vaevictis
@@ -40,11 +51,16 @@ Components: main
 Signed-By: /etc/apt/keyrings/vaevictis.gpg
 EOF
 sudo apt update
-sudo apt install vaevictis-aurora
+sudo apt install vaevictis-archive-keyring vaevictis-aurora
+sudo rm /etc/apt/sources.list.d/vaevictis-bootstrap.sources /etc/apt/keyrings/vaevictis.gpg
+sudo apt update
 ```
 
-From then on `sudo apt update && sudo apt upgrade` updates these programs together with the rest of the system. To stop trusting
-the repository, delete `/etc/apt/sources.list.d/vaevictis.sources` and `/etc/apt/keyrings/vaevictis.gpg`.
+(The `rm` is needed: apt refuses two entries for the same repository with different keys.) If you followed the older version of
+this page, your entry is called `vaevictis.sources`: when `apt install vaevictis-archive-keyring` asks about that file, answer `Y`
+(take the package's version), then delete `/etc/apt/keyrings/vaevictis.gpg`.
+
+To stop trusting the repository later: `sudo apt purge vaevictis-archive-keyring`.
 
 What this asks you to trust, in plain words:
 
@@ -54,8 +70,7 @@ What this asks you to trust, in plain words:
 - GitHub Pages only serves public files. The index files (`Release`, `InRelease`) are signed; `apt` rejects anything that does not
   verify. A published version is never changed: a fix is a new version.
 - Every package is also published as an immutable release of this project, with its SHA-256, so you can compare.
-- If the key were ever lost or stolen it would be revoked, and a new key and fingerprint would be published here and on the project
-  page.
+- If the key were ever lost or stolen: what happens and what you do is written in [APT-REPOSITORY.md](APT-REPOSITORY.md).
 
 ### Without the repository: the `.deb` from the release
 

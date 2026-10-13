@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.1
+
+Safer by default. Systems installed from 1.0 still need the [2026-10-12 security notice](docs/SECURITY-NOTICE-2026-10-12.md).
+
+- **HIDS removed.** The file-integrity daemon was the largest piece of this project's code always running as root; the
+  protections below replace it. `vv-branding` removes it from older build trees.
+- **Boot menu password (GRUB)**, always set by the installer: starting needs none; editing the start options or the GRUB console
+  needs user `grub` and that password (PBKDF2, 210000 rounds), which must differ from the other passwords and use only keys
+  that GRUB's US keyboard reads the same. `sudo vv-grub-password` changes it.
+- **New boot screens** (style A, minimal, violet): GRUB menu with the logo, and a Plymouth screen with a thin progress bar and the
+  disk passphrase box (any length, the keyboard in use, error messages shown). `Esc` still shows every boot message.
+- **Installer:** free space shown before every size question and each size checked; the root partition must hold the system;
+  whole disks only; mount points checked; the live session switches to your keyboard layout and a typing test checks it;
+  SSD TRIM before partitioning; `/boot` and EFI `nosuid,nodev,noexec`, `/home` and data partitions `nosuid,nodev`; the disk
+  passphrase is cleared from memory after use; no "Install" launcher on installed systems.
+- **Sandbox for the programs that open files from anywhere:** Aurora, LinPaint+ and VaeVictis PDF run in bubblewrap with no
+  network, a read-only system and home (except the data folders, their settings and the opened file's folder), hidden keys and
+  browser profiles, filtered D-Bus.
+- **VPN with least privilege:** configs read with a whitelist (commands refused at import and at connect); WireGuard runs in a
+  systemd sandbox with only `CAP_NET_ADMIN` and a read-only system; the helper sets DNS itself. **Kill switch:** also blocks
+  virtual machines (forward chain), stays on during a reconnect and after a failed one; no DNS lookup while it blocks.
+- **v-snap:** snapshots only on encrypted disks (or the system disk of an unencrypted system), in a root-only folder pinned with
+  a private bind mount; system snapshots include the kernels in `/boot`, and a restore puts back matching kernels and runs
+  `update-grub`; a 1.0 snapshot is restored only if it has the modules of the installed kernels.
+- **Programs:** VaeVictis PDF keeps the password of a protected PDF in extracted and split files, warns before exporting a
+  protected page as PNG and caps its size; dialogs show plain text. Aurora 1.1.1: song tags escaped, single-instance socket file,
+  works with a read-only home. LinPaint+: Copy really copies to the clipboard; licence shown as GPL. Panic: the passwordless rule
+  is limited to administrators (`%sudo`).
+- **Kernel:** `dev.tty.legacy_tiocsti=0` (no typing into other terminals), `kernel.io_uring_disabled=2`.
+- **APT repository trusted by default, with limits:** package `vaevictis-archive-keyring` (key for this source only, a pin that
+  allows only `vaevictis-*` packages from it), index signed with an expiry date (`vv-apt-publish`), procedures in
+  [docs/APT-REPOSITORY.md](docs/APT-REPOSITORY.md).
+- **Build:** every VaeVictis file in the image now comes from a script (`vv-apps`, `vv-boot-theme`); `vv-verify-iso` compares
+  them byte for byte with the repository; `vv-release --key` signs with one named key and checks it; `vv-usb` reads the stick
+  back without the page cache; tests in `tests/`. Links point to vaevictisos.org.
+
 ## 1.0.1 (2026-10-12): security release
 
 Fixes found in an audit of the VaeVictis code. Systems installed from 1.0 need the four commands of the

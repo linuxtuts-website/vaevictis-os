@@ -10,8 +10,8 @@ files of `build/` together in one folder and run them from there.
 ## You need
 
 A Debian or Ubuntu machine with: `debootstrap`, `squashfs-tools`, `xorriso`, `mtools`, `grub-common`, `grub-pc-bin`,
-`grub-efi-amd64-bin`, and for testing `qemu-system-x86`, `ovmf`. About 25 GB free. Run as a normal user with `sudo`.
-Go is installed inside the chroot only for the build of HIDS and purged afterwards.
+`grub-efi-amd64-bin`, `dpkg-dev` (for `dpkg-deb`), `apt-utils` (for `apt-ftparchive`, publishing only), and for testing
+`qemu-system-x86`, `ovmf`. About 25 GB free. Run as a normal user with `sudo`.
 
 ## Steps
 
@@ -21,12 +21,17 @@ Go is installed inside the chroot only for the build of HIDS and purged afterwar
    (fonts, codecs, firmware, packages the tools need); install what it lists with `./vv-chroot run apt-get install ...`.
 2. **Audit.** `./vv-chroot audit` is a read-only report of what still needs fixing.
 3. **Apply the project's settings** (each is safe to repeat; replaced files are backed up outside the image):
-   - `./vv-secure`: kernel and system hardening
+   - packages the 1.1 programs need: `./vv-chroot run apt-get install bubblewrap xdg-dbus-proxy xdg-user-dirs plymouth plymouth-label fonts-ibm-plex`
+   - the Debian packages of this repository, from the repository root: `packaging/aurora/build.sh` and
+     `packaging/archive-keyring/build.sh` (they write `dist/`)
+   - `./vv-secure`: kernel and system hardening, panic button, `vv-grub-password`
    - `./vv-harden`: nftables firewall, hardened sshd (switched off), fail2ban
-   - `./vv-branding`: icons, Welcome window, login screen, GRUB theme, system identity
-   - `./vv-hids`: builds the HIDS inside the chroot and installs it with its dashboard, popups and service
-   - the VPN manager (`inject-vv-vpn.sh`), `vv-nvidia` (optional driver script), the installer (`vaevictis_install.sh`)
-   - the custom desktop applications (Aurora, LinPaint+, VaeVictis PDF): see [below](#custom-desktop-applications)
+   - `./vv-apps [--apt-repo]`: every VaeVictis program, its launchers and its sandbox (see below); with `--apt-repo` also the
+     APT repository (only when the conditions at the top of `vv-apps` hold: two-factor login on GitHub and Cloudflare, a signed
+     index with an expiry date)
+   - `./vv-branding`: icons, Welcome window, login screen, system identity (it also removes what 1.0 builds had of the HIDS)
+   - `./vv-boot-theme`: the GRUB menu and the Plymouth boot screen (it rebuilds the chroot's initramfs)
+   - optional: `vv-nvidia` is installed by `vv-apps`; it is run by the user on the installed system
 4. **Replace the personal user with the live user.** `./vv-liveuser` shows the plan, `./vv-liveuser --apply` does it.
 5. **Seal the chroot.** `./vv-chroot seal` removes machine-id, SSH host keys, shell history, logs and other leftovers.
 6. **Build.** `./vv-iso build --release` (xz, smaller; refuses an unsealed chroot). Faster test build: `./vv-iso build`.
@@ -34,28 +39,33 @@ Go is installed inside the chroot only for the build of HIDS and purged afterwar
    the files changed in this build, packages, boot options, and that nothing personal is inside. It prints the SHA-256.
 8. **Test in a VM.** `./vv-iso run-uefi` (or `run` for BIOS). To try the installer on a blank virtual disk:
    `./vv-iso disk 40G && ./vv-iso install uefi`, then `./vv-iso boot uefi` to start the installed system.
-9. **Release.** `./vv-release VERSION [--sign]` refuses to continue if anything personal is still in the chroot, then writes
+   The tests in `tests/` run on any Linux machine (see `tests/README.md`).
+9. **Release.** `./vv-release VERSION [--sign --key FINGERPRINT]` refuses to continue if anything personal is still in the chroot, then writes
    `release/VERSION/` with the ISO, `SHA256SUMS` (+ GPG signature with `--sign`), CycloneDX SBOM, `PACKAGES.txt`, `SOURCES.txt`,
    `grub.cfg.txt` (the exact boot options) and `BUILD-INFO.txt`.
 
 ## Custom desktop applications
 
-Aurora (music player), LinPaint+ (image editor and screenshot tool) and VaeVictis PDF (`vv-pdf`) are single Python programs
-kept in `build/`. They are **not installed by a script yet**: in the image they were copied into the chroot by hand, and this is
-the exact result you must reproduce (as root, with the chroot's paths):
+`./vv-apps` installs them from this repository, nothing is copied by hand:
 
-| What | Where in the image | Mode |
-|---|---|---|
-| the program | `/usr/local/bin/aurora`, `/usr/local/bin/linpaint`, `/usr/local/bin/vv-pdf` | `755` |
-| the menu launchers | `/usr/share/applications/aurora.desktop`, `linpaint.desktop`, `vv-pdf.desktop` (and `vaevictis_install.desktop` for the installer) | `644` |
-| the icons | `vv-aurora.svg`, `vv-linpaint.svg`, `vv-pdf.svg` in the `hicolor` icon theme (`/usr/share/icons/hicolor/`) | `644` |
+| What | Where in the image |
+|---|---|
+| Aurora | the package `vaevictis-aurora` (`/usr/bin/aurora`), built by `packaging/aurora/build.sh` |
+| VaeVictis PDF, LinPaint+ | `/usr/local/lib/vaevictis/vv-pdf`, `/usr/local/lib/vaevictis/linpaint` (from `vv-pdf.py`, `linpaint.py`) |
+| their commands | `/usr/local/bin/aurora`, `vv-pdf`, `linpaint`: three-line scripts that always start the program through `vv-sandbox` |
+| the sandbox | `/usr/local/libexec/vv-sandbox` (bubblewrap + xdg-dbus-proxy): see the comment at its top for what each program may do |
+| v-snap, VPN manager, installer, vv-nvidia | `/usr/local/bin`, `/usr/local/libexec`, `/usr/local/sbin`, with their menu launchers and the desktop launchers of new users |
+| apt | `/etc/apt/apt.conf.d/99-vaevictis-no-bloat` (no recommended or suggested packages) |
 
-The first line of each program is its interpreter (`#!/usr/bin/env python3`), so the file is copied under the command name
-without the `.py` extension. The libraries each program needs are the `import` lines at the top of the file; install the matching
-Debian packages in the chroot (for example `vv-pdf` uses PyMuPDF and PyQt6). Aurora and `vv-pdf` open no network connection at all.
-After copying, run `./vv-chroot audit` again and, in the test VM, open each program once from the menu.
+The libraries each program needs are the `import` lines at the top of its file; `vv-apps` checks that they import in the chroot.
+`VV_NO_SANDBOX=1 vv-pdf` starts a program without its sandbox, only to find out whether the sandbox is what breaks it.
 
-Scripting this step is on the to-do list.
+## Publishing packages
+
+`build/vv-apt-publish --repo PATH-TO/vaevictis-apt --key 0A41158C1DD6718D3D3FFED068486B39B2A99993 dist/*.deb` adds the packages
+(only `vaevictis-*`, a published version is never replaced), signs the index with an expiry date (30 days by default) and checks the
+signatures with the published key. It never commits or pushes. **Re-sign before the expiry date** (the same command without
+packages), otherwise every VaeVictis system reports the repository as expired. Procedures: [APT-REPOSITORY.md](APT-REPOSITORY.md).
 
 ## Writing the image to a USB stick
 
