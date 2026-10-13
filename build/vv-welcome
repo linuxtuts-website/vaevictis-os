@@ -325,9 +325,10 @@ class Welcome(Gtk.Window):
             ("Linpaint", "Dark MS-Paint-style editor: pencil, brush, spray, eraser, fill, picker, text and shapes. "
                          "Takes screenshots (full screen or area, with a delay) and opens them for editing."),
             ("PDF Tool", "View and edit PDFs locally (Ctrl+T to insert text). Nothing is uploaded anywhere."),
-            ("Snap", "Incremental snapshots with hardlinks (rsync) for ext4, xfs and btrfs: system snapshot (without /home), "
-                     "folder backup, list, delete and restore. Run 'sudo v-snap'. Installed systems only. "
-                     "It lives on the same disk: it protects from a bad update, not from a dead disk."),
+            ("Snap", "Incremental snapshots with hardlinks (rsync) for ext4, xfs and btrfs: system snapshot (with the kernels, "
+                     "without /home), folder backup, list, delete and restore. Run 'sudo v-snap'. Installed systems only. "
+                     "On the system disk it protects from a bad update; on an external disk also from a dead disk. "
+                     "Snapshots hold the system's secrets, so an external disk must be encrypted (LUKS)."),
             ("Panic", "Cuts the network, flushes the disks and powers off at once (needs no password, asks nothing twice). "
                       "It is not a secure erase: RAM fades after power-off, it is not wiped."),
             ("KeePassXC", "Offline password manager. Your database is a single encrypted file; nothing is synced anywhere."),

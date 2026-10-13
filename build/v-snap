@@ -1,8 +1,27 @@
 #!/bin/bash
-# VaeVictis Snap - hardlink snapshots for ext4 (installed systems only)
-# Usage: sudo v-snap [snapshot-directory]
+# VaeVictis Snap - hardlink snapshots for ext4, xfs and btrfs (installed systems only)
+# Usage: sudo v-snap [FOLDER]        the snapshots are kept in FOLDER/.vaevictis-snapshots
+#
+# Safety rules (1.1):
+#  - a system snapshot holds the secrets of the system (password hashes, disk key files, VPN and Wi-Fi keys), so
+#    snapshots are kept only on an encrypted (LUKS) disk, or on the system disk itself when the system is not
+#    encrypted (then no copy of those secrets leaves the disk they are already on);
+#  - the snapshot folder belongs to root, is closed to everybody else (0700) and is never a symbolic link; v-snap pins
+#    it with a bind mount that only v-snap sees, so nothing can swap it while v-snap works;
+#  - a system snapshot includes the kernels in /boot; a restore puts back the matching kernels and runs update-grub.
 
 [ "$EUID" -eq 0 ] || { echo "Insufficient permissions. Run with: sudo v-snap"; exit 1; }
+if grep -qw 'boot=live' /proc/cmdline; then
+    echo "v-snap works on an installed system, not in the live session."; exit 1
+fi
+# Work in a mount namespace of our own: the bind mount below is visible to v-snap only and vanishes when it exits.
+# "slave": disks plugged in while v-snap runs still appear here.
+if [ "$(readlink /proc/self/ns/mnt)" = "$(readlink /proc/1/ns/mnt)" ]; then
+    command -v unshare >/dev/null 2>&1 || { echo "unshare is missing (package util-linux)."; exit 1; }
+    exec unshare --mount --propagation slave -- "$(realpath "$0")" "$@"
+fi
+
+command -v rsync >/dev/null 2>&1 || { echo "rsync is not installed: sudo apt-get install rsync"; exit 1; }
 
 if [ -n "${1:-}" ]; then
     SNAP_DIR="${1%/}"
@@ -12,7 +31,11 @@ else
     SNAP_DIR="/.vaevictis-snapshots"
 fi
 
-command -v rsync >/dev/null 2>&1 || { echo "rsync is not installed: sudo apt-get install rsync"; exit 1; }
+# Where v-snap itself reads and writes the snapshots: SNAP_DIR, pinned by a bind mount in a root-only folder.
+STORE="/run/v-snap.$$"
+mkdir -m 0700 "$STORE" || { echo "Cannot create $STORE"; exit 1; }
+cleanup() { umount "$STORE" 2>/dev/null; rmdir "$STORE" 2>/dev/null; }
+trap cleanup EXIT
 
 # ---- folder picker -------------------------------------------------------------------------
 # v-snap runs as root (sudo), and root cannot open windows on your screen. So the dialog is started AS THE USER
@@ -59,6 +82,7 @@ choose_storage() {
     local ans dir
     echo -e "\nSnapshot storage: $SNAP_DIR"
     echo "  On the system disk it protects from a bad update only; on an external disk it also protects from a disk failure."
+    echo "  An external disk must be encrypted (LUKS): the snapshots hold the secrets of this system."
     read -rp "Press ENTER to keep it, B to browse for a folder (disk, USB stick...), or type a full path: " ans
     case "$ans" in
         "")   return 0 ;;
@@ -67,26 +91,68 @@ choose_storage() {
         /*)   dir="$ans" ;;
         *)    echo "Not a full path (it must start with /): keeping $SNAP_DIR"; return 0 ;;
     esac
-    dir="${dir%/}"
-    case "$dir" in */.vaevictis-snapshots) ;; *) dir="$dir/.vaevictis-snapshots" ;; esac
-    SNAP_DIR="$dir"
-    echo "Snapshots will be kept in: $SNAP_DIR"
+    SNAP_DIR="${dir%/}"
 }
 
-# create the folder, check the filesystem, build the list of what a system snapshot leaves out
+src_dev()      { findmnt -no SOURCE -T "$1" 2>/dev/null | tail -n 1 | sed 's/\[.*$//'; }     # btrfs: /dev/x[/subvol]
+on_encrypted() { local d; d=$(src_dev "$1"); [ -b "$d" ] && lsblk -nrso TYPE "$d" 2>/dev/null | grep -qx crypt; }
+disks_of()     { local d; d=$(src_dev "$1"); [ -b "$d" ] && lsblk -nrso NAME,TYPE "$d" 2>/dev/null | awk '$2 == "disk" || $2 == "loop" {print $1}' | sort -u; }
+rsync_quote()  { printf '%s' "$1" | sed 's/[][*?\\]/\\&/g'; }                                # literal path in an rsync pattern
+
+# Check the place, create the folder if needed and pin it on $STORE. Returns 1 (with the reason) if it is not safe.
 setup_storage() {
-    mkdir -p "$SNAP_DIR" || { echo "Cannot create $SNAP_DIR"; return 1; }
-    chmod 700 "$SNAP_DIR"
-    FSTYPE=$(findmnt -no FSTYPE -T "$SNAP_DIR")
+    local parent st target fsroot rel expect got
+    umount "$STORE" 2>/dev/null
+    case "$SNAP_DIR" in */.vaevictis-snapshots) ;; *) SNAP_DIR="${SNAP_DIR%/}/.vaevictis-snapshots" ;; esac
+    parent=$(dirname "$SNAP_DIR")
+    parent=$(realpath -e -- "$parent" 2>/dev/null) && [ -d "$parent" ] || { echo "Folder not found: $(dirname "$SNAP_DIR")"; return 1; }
+    SNAP_DIR="${parent%/}/.vaevictis-snapshots"
+
+    FSTYPE=$(findmnt -no FSTYPE -T "$parent" | tail -n 1)
     case "$FSTYPE" in
         ext4|ext3|xfs|btrfs) ;;
         *) echo "Unsupported filesystem '$FSTYPE' for $SNAP_DIR (needs Linux permissions and hardlinks)."; return 1 ;;
     esac
-    # /home is never part of a system snapshot: use option 2 for it
+    if on_encrypted "$parent"; then
+        WHERE="encrypted disk"
+    elif ! on_encrypted / && [ -n "$(comm -12 <(disks_of "$parent") <(disks_of /))" ]; then
+        WHERE="system disk, not encrypted: the snapshots are as readable as the system itself"
+    else
+        echo "Refused: $parent is not on an encrypted disk."
+        echo "A system snapshot holds the secrets of this system (password hashes, disk keys, VPN and Wi-Fi keys)."
+        echo "Use an encrypted disk: in Disks, format the partition with 'Password protect volume (LUKS)'."
+        return 1
+    fi
+
+    if [ -L "$SNAP_DIR" ]; then echo "Refused: $SNAP_DIR is a symbolic link (it could point anywhere)."; return 1; fi
+    if [ ! -e "$SNAP_DIR" ]; then
+        mkdir -m 0700 -- "$SNAP_DIR" || { echo "Cannot create $SNAP_DIR"; return 1; }
+    fi
+    st=$(stat -c '%u %a %F' -- "$SNAP_DIR" 2>/dev/null)
+    if [ "$st" != "0 700 directory" ]; then
+        echo "Refused: $SNAP_DIR is not a folder of root closed to everybody else (it is: ${st:-missing})."
+        echo "v-snap never makes it like that: rename or delete it, then try again."
+        return 1
+    fi
+
+    # Pin it, then check that what got pinned is still that folder of root (nothing swapped it in the meantime)
+    target=$(findmnt -no TARGET -T "$SNAP_DIR" | tail -n 1); fsroot=$(findmnt -no FSROOT -T "$SNAP_DIR" | tail -n 1)
+    rel="${SNAP_DIR#"$target"}"; expect="${fsroot%/}/${rel#/}"
+    mount --bind -- "$SNAP_DIR" "$STORE" || { echo "Cannot open $SNAP_DIR"; return 1; }
+    mount -o remount,bind,nosuid,nodev,noexec "$STORE" 2>/dev/null || true
+    st=$(stat -c '%u %a %F' "$STORE"); got=$(findmnt -no FSROOT "$STORE" | tail -n 1)
+    if [ "$st" != "0 700 directory" ] || [ "$got" != "$expect" ]; then
+        umount "$STORE" 2>/dev/null
+        echo "Refused: $SNAP_DIR changed while it was being opened."
+        return 1
+    fi
+
+    # /home is never part of a system snapshot (use option 2 for it); /boot is copied on its own (see snap_system)
     SYS_EXCLUDES=(--exclude="/dev/*" --exclude="/proc/*" --exclude="/sys/*" --exclude="/tmp/*"
                   --exclude="/run/*" --exclude="/mnt/*" --exclude="/media/*" --exclude="/lost+found"
-                  --exclude="/boot/efi/*" --exclude="/home/*" --exclude="/swapfile"
-                  --exclude="$SNAP_DIR")
+                  --exclude="/boot/*" --exclude="/home/*" --exclude="/swapfile"
+                  --exclude="$(rsync_quote "$SNAP_DIR")")
+    echo "Snapshots will be kept in: $SNAP_DIR ($WHERE)"
 }
 
 if [ -n "${1:-}" ]; then :; else choose_storage; fi       # a folder given on the command line is used as it is
@@ -94,49 +160,60 @@ setup_storage || exit 1
 
 ts()        { date +%Y-%m-%d_%H-%M-%S; }
 hum()       { numfmt --to=iec --from-unit=1024 "$1"; }
-avail_kb()  { df --output=avail -k "$SNAP_DIR" | tail -n 1 | tr -d ' '; }
-used_kb()   { df --output=used -k / | tail -n 1 | tr -d ' '; }
-sys_snaps() { find "$SNAP_DIR" -maxdepth 1 -type d -name 'sys-snap-*' ! -name '*.partial' | sort; }
+avail_kb()  { df --output=avail -k "$STORE" | tail -n 1 | tr -d ' '; }
+used_kb()   { df --output=used -k "$1" | tail -n 1 | tr -d ' '; }
+sys_snaps() { find "$STORE" -mindepth 1 -maxdepth 1 -type d -name 'sys-snap-*' ! -name '*.partial' | sort; }
+shown()     { printf '%s' "$SNAP_DIR${1#"$STORE"}"; }          # the path as the user knows it
 
 clean_partials() {
     local p
-    for p in "$SNAP_DIR"/*.partial; do
+    for p in "$STORE"/*.partial; do
         [ -d "$p" ] || continue
         echo "Removing leftover partial snapshot: $(basename "$p")"
-        rm -rf "$p"
+        rm -rf -- "$p"
     done
 }
 
 # $1 = rsync exit code, $2 = .partial path, $3 = final path
 finish() {
     if [ "$1" -eq 0 ] || [ "$1" -eq 24 ]; then
-        mv "$2" "$3" && echo -e "\n✓ Completed: $3"
+        mv -- "$2" "$3" && echo -e "\n✓ Completed: $(shown "$3")"
     else
         echo -e "\n✗ rsync failed (exit $1). Snapshot NOT saved."
-        rm -rf "$2"
+        rm -rf -- "$2"
     fi
 }
 
 snap_system() {
     clean_partials
-    local latest need link=()
+    local latest need rc link=() blink=()
     latest=$(sys_snaps | tail -n 1)
     if [ -n "$latest" ]; then
         echo "Previous snapshot: $(basename "$latest"). Only changed files use new space."
         link=(--link-dest="$latest")
+        [ -d "$latest/boot" ] && blink=(--link-dest="$latest/boot")
         need=1048576
     else
-        need=$(used_kb)
-        echo "First snapshot: full copy of / (up to $(hum "$need"), /home excluded)."
+        need=$(( $(used_kb /) + $(used_kb /boot) ))
+        echo "First snapshot: full copy of / and /boot (up to $(hum "$need"), /home excluded)."
     fi
     if [ "$(avail_kb)" -lt "$need" ]; then
         echo "Not enough free space on $SNAP_DIR: $(hum "$(avail_kb)") free, at least $(hum "$need") needed."
         return
     fi
-    local dest="$SNAP_DIR/sys-snap-$(ts)"
+    local dest
+    dest="$STORE/sys-snap-$(ts)"
     trap 'echo' INT
     rsync -aHAXx --numeric-ids --info=progress2 "${link[@]}" "${SYS_EXCLUDES[@]}" / "$dest.partial/"
-    finish $? "$dest.partial" "$dest"
+    rc=$?
+    if [ "$rc" -eq 0 ] || [ "$rc" -eq 24 ]; then
+        # the kernels and their initramfs, so a restore never leaves a kernel without its modules. GRUB's own files
+        # and the EFI partition stay out: they must match the boot loader installed on the disk, not an old copy.
+        echo "Copying /boot (kernels)..."
+        rsync -aHAXx --numeric-ids "${blink[@]}" --exclude=/efi/ --exclude=/grub/ --exclude=/lost+found /boot/ "$dest.partial/boot/"
+        rc=$?
+    fi
+    finish "$rc" "$dest.partial" "$dest"
     trap - INT
 }
 
@@ -152,14 +229,14 @@ snap_folder() {
     src=$(realpath -m "$src")
     [ -d "$src" ] || { echo "Error: folder not found!"; return; }
     [ "$src" = "/" ] && { echo "Use option 1 for the whole system."; return; }
-    case "$src/" in "$SNAP_DIR"/*) echo "Cannot back up the snapshot directory itself."; return ;; esac
-    case "$SNAP_DIR/" in "$src"/*) excl+=(--exclude="${SNAP_DIR#"$src"}") ;; esac
+    case "$src/" in "$SNAP_DIR"/*|"$STORE"/*) echo "Cannot back up the snapshot directory itself."; return ;; esac
+    case "$SNAP_DIR/" in "$src"/*) excl+=(--exclude="$(rsync_quote "${SNAP_DIR#"$src"}")") ;; esac
     case "$src" in
         /home|/home/*) excl+=(--exclude=".cache/" --exclude=".local/share/Trash/")
                        echo "Skipping .cache and Trash folders." ;;
     esac
     name=$(printf '%s' "$(basename "$src")" | tr -c 'A-Za-z0-9_.-' '_')
-    latest=$(find "$SNAP_DIR" -maxdepth 1 -type d -regextype posix-extended \
+    latest=$(find "$STORE" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended \
              -regex ".*/dir-snap-$name-[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}" | sort | tail -n 1)
     if [ -n "$latest" ]; then
         echo "Previous backup: $(basename "$latest"). Only changed files use new space."
@@ -174,22 +251,22 @@ snap_folder() {
         echo "Not enough free space on $SNAP_DIR: $(hum "$(avail_kb)") free, at least $(hum "$need") needed."
         return
     fi
-    dest="$SNAP_DIR/dir-snap-$name-$(ts)"
+    dest="$STORE/dir-snap-$name-$(ts)"
     trap 'echo' INT
     rsync -aHAX --numeric-ids --info=progress2 "${link[@]}" "${excl[@]}" "$src/" "$dest.partial/"
     finish $? "$dest.partial" "$dest"
     trap - INT
-    echo "To restore it: rsync -aHAX $dest/ $src/"
+    echo "To restore it: sudo rsync -aHAX $(shown "$dest")/ $src/"
 }
 
 list_snaps() {
     echo -e "\nSnapshots in $SNAP_DIR ($FSTYPE, $(hum "$(avail_kb)") free):"
     SNAPS=()
     local s i=0
-    while IFS= read -r s; do SNAPS+=("$s"); done < <(find "$SNAP_DIR" -maxdepth 1 -type d \( -name 'sys-snap-*' -o -name 'dir-snap-*' \) | sort)
+    while IFS= read -r s; do SNAPS+=("$s"); done < <(find "$STORE" -mindepth 1 -maxdepth 1 -type d \( -name 'sys-snap-*' -o -name 'dir-snap-*' \) ! -name '*.partial' | sort)
     if [ ${#SNAPS[@]} -eq 0 ]; then echo "  (none)"; return 1; fi
     for s in "${SNAPS[@]}"; do i=$((i + 1)); printf "  %2d) %s\n" "$i" "$(basename "$s")"; done
-    echo "Real space used (hardlinked files counted once): $(du -sh "$SNAP_DIR" | cut -f1)"
+    echo "Real space used (hardlinked files counted once): $(du -sh "$STORE" | cut -f1)"
 }
 
 delete_snap() {
@@ -209,7 +286,7 @@ delete_snap() {
 }
 
 restore_snap() {
-    local SYS=() s i=0 n src c
+    local SYS=() s i=0 n src c k kver missing="" have_boot=0 rc
     while IFS= read -r s; do SYS+=("$s"); done < <(sys_snaps)
     [ ${#SYS[@]} -gt 0 ] || { echo "No system snapshots found."; return; }
     echo -e "\nSystem snapshots:"
@@ -219,14 +296,47 @@ restore_snap() {
         echo "Cancelled."; return
     fi
     src="${SYS[$((n - 1))]}"
+    [ "$(stat -c '%u' -- "$src")" = 0 ] || { echo "Refused: $(basename "$src") does not belong to root."; return; }
+
+    # The restored system must boot a kernel whose modules it has (drivers, firewall, disk encryption).
+    if compgen -G "$src/boot/vmlinuz-*" >/dev/null; then
+        have_boot=1
+        for k in "$src"/boot/vmlinuz-*; do
+            kver=${k##*/vmlinuz-}; [ -d "$src/usr/lib/modules/$kver" ] || missing+=" $kver"
+        done
+        [ -z "$missing" ] || { echo "Refused: the snapshot is incomplete (kernel without its modules:$missing)."; return; }
+    else
+        # made by v-snap 1.0, without /boot: the kernels in /boot now stay, so the snapshot must have their modules
+        for k in /boot/vmlinuz-*; do
+            [ -e "$k" ] || continue
+            kver=${k##*/vmlinuz-}; [ -d "$src/usr/lib/modules/$kver" ] || missing+=" $kver"
+        done
+        if [ -n "$missing" ]; then
+            echo "Refused: this snapshot was made by an older v-snap, without /boot, and it lacks the modules of"
+            echo "the kernel(s) installed now:$missing. Restoring it would start a kernel without its drivers."
+            return
+        fi
+    fi
+
     echo -e "\nThis OVERWRITES the running system with $(basename "$src") and deletes files"
-    echo "created after it. /home, /etc/fstab and the EFI partition are NOT touched."
+    echo "created after it. /home, /etc/fstab, /etc/crypttab, the disk key files, GRUB and the EFI partition are NOT touched."
     echo "Save your work first and reboot right after."
     read -rp "Type RESTORE to continue: " c
     [ "$c" = "RESTORE" ] || { echo "Cancelled."; return; }
-    rsync -aHAXx --numeric-ids --delete --info=progress2 \
-        "${SYS_EXCLUDES[@]}" --exclude="/etc/fstab" "$src/" /
-    echo -e "\n✓ Restore finished (rsync exit $?). Reboot now: sudo reboot"
+    rsync -aHAXx --numeric-ids --delete --info=progress2 "${SYS_EXCLUDES[@]}" \
+        --exclude=/etc/fstab --exclude=/etc/crypttab --exclude=/etc/cryptsetup-keys.d/ "$src/" /
+    rc=$?
+    if [ "$have_boot" -eq 1 ]; then
+        echo "Restoring the kernels in /boot..."
+        rsync -aHAXx --numeric-ids --delete --exclude=/efi/ --exclude=/grub/ --exclude=/lost+found "$src/boot/" /boot/ || rc=$?
+    fi
+    echo "Updating the boot menu..."
+    update-grub || { rc=1; echo "update-grub failed: run 'sudo update-grub' before rebooting."; }
+    if [ "$rc" -eq 0 ] || [ "$rc" -eq 24 ]; then
+        echo -e "\n✓ Restore finished. Reboot now: sudo reboot"
+    else
+        echo -e "\n✗ Restore finished with errors (rsync exit $rc). Read the messages above before rebooting."
+    fi
 }
 
 while true; do
@@ -235,7 +345,7 @@ while true; do
     echo "          VaeVictis Snap Utility        "
     echo "========================================"
     echo " Storage: $SNAP_DIR"
-    echo " (same disk: protects from bad updates, not from disk failure)"
+    echo " Kept on: $WHERE"
     echo "----------------------------------------"
     echo " 1) System snapshot (incremental, /home excluded)"
     echo " 2) Folder backup (e.g. /home)"
@@ -245,7 +355,7 @@ while true; do
     echo " 6) Exit"
     echo " 7) Change the storage location"
     echo "========================================"
-    read -rp "Choose an option [1-7]: " choice
+    read -rp "Choose an option [1-7]: " choice || { echo; exit 0; }       # end of input: leave instead of looping
     case "$choice" in
         1) snap_system ;;
         2) snap_folder ;;
