@@ -320,7 +320,8 @@ class Welcome(Gtk.Window):
         sw, box = page()
         for name, text in (
             ("VPN", "WireGuard manager. IMPORT your provider's .conf file, then CONNECT. Privileged actions go through a small "
-                    "checked helper (polkit), never through the app itself."),
+                    "checked helper (polkit, your password), never through the app itself; WireGuard itself runs in a sandbox "
+                    "that can only configure the network. Configs with commands (PostUp...) are refused."),
             ("Aurora", "Offline, privacy-focused audio player. No network access."),
             ("Linpaint", "Dark MS-Paint-style editor: pencil, brush, spray, eraser, fill, picker, text and shapes. "
                          "Takes screenshots (full screen or area, with a delay) and opens them for editing."),

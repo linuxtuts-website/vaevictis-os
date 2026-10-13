@@ -16,7 +16,7 @@ from gi.repository import Gtk, GLib
 CONF_DIR = "/etc/wireguard"
 INDEX = "/var/lib/vv-vpn/nodes"                  # names only, readable by everyone
 HELPER = "/usr/local/libexec/vv-vpn-helper"
-NAME_RE = re.compile(r"^[A-Za-z0-9_=+.-]{1,15}$")  # valid wg-quick interface names
+NAME_RE = re.compile(r"[A-Za-z0-9_=+.-]{1,15}")    # valid wg-quick interface names (used with fullmatch)
 POLL_SECONDS = 2
 KS_FLAG = "/run/vv-vpn/killswitch"               # exists while the kill switch is on (made by the helper)
 KS_PREF = os.path.expanduser("~/.config/vaevictis/vv-vpn-killswitch")   # "1" = ask for it at every connect
@@ -48,7 +48,7 @@ separator { background: #1c1c22; min-height: 1px; }
 
 
 def valid_name(name):
-    return bool(NAME_RE.match(name or ""))
+    return bool(NAME_RE.fullmatch(name or ""))
 
 
 def scan_nodes():

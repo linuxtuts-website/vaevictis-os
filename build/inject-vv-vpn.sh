@@ -22,4 +22,4 @@ install -d -m 0700 "$CHROOT/etc/wireguard"
 echo "VaeVictis VPN installed in $CHROOT"
 echo
 echo "Make sure these packages are in the chroot (apt install --no-install-recommends ...):"
-echo "  python3-gi gir1.2-gtk-3.0 wireguard-tools iproute2 pkexec polkitd curl openresolv"
+echo "  python3-gi gir1.2-gtk-3.0 wireguard-tools iproute2 nftables kmod systemd pkexec polkitd curl openresolv"
