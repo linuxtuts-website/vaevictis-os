@@ -12,7 +12,10 @@
 # reports an error for this repository at "apt update" (Debian's own updates keep working). Re-signing changes
 # nothing else: run this script without packages, check, commit, push.
 #
-# It only writes into DIR. It never commits or pushes: you check the result and publish it yourself.
+# The key is used from your GnuPG home; if it lives elsewhere (an encrypted disk), set GNUPGHOME for this command:
+#   GNUPGHOME=/media/user/Mio/chiavi-apt/firma/.vaevictis-apt-gnupg vv-apt-publish ...
+# It only writes into DIR (index, signatures, the package list in README.md and index.html). It never commits or pushes:
+# you check the result and publish it yourself.
 # A published version is never replaced: a different file under the same name is refused (a fix is a new version).
 # Only packages named vaevictis-* are accepted (the systems trust this repository for those names only).
 set -euo pipefail
@@ -92,6 +95,30 @@ gpg --local-user "$KEY" --digest-algo SHA512 --armor --detach-sign --output "dis
 gpgv --keyring "$KEYRING" "dists/$SUITE/InRelease" 2>/dev/null \
     && gpgv --keyring "$KEYRING" "dists/$SUITE/Release.gpg" "dists/$SUITE/Release" 2>/dev/null \
     || die "the new signatures do NOT verify with $KEYRING: do not publish"
+
+# 4. the package list shown on the repository's pages (README.md, index.html): one line per package, newest version
+python3 - "$bin/Packages" <<'PYEND' || echo "note: the package list in README.md / index.html was not updated"
+import html, re, sys
+latest = {}
+for block in open(sys.argv[1]).read().split("\n\n"):
+    f = dict(re.findall(r"^([A-Za-z-]+): (.*)$", block, re.M))
+    if "Package" in f:
+        latest[f["Package"]] = (f.get("Version", ""), f.get("Description", "").strip())   # apt-ftparchive lists oldest first
+def update(path, line_re, make):
+    try:
+        text = open(path).read()
+    except OSError:
+        return
+    lines = text.split("\n")
+    idx = [i for i, l in enumerate(lines) if re.match(line_re, l)]
+    if not idx:
+        return
+    new = [make(p, v, d) for p, (v, d) in sorted(latest.items())]
+    lines[idx[0]:idx[-1] + 1] = new
+    open(path, "w").write("\n".join(lines))
+update("README.md", r"^- `vaevictis-", lambda p, v, d: f"- `{p}` {v} - {d}")
+update("index.html", r"^<li><code>vaevictis-", lambda p, v, d: f"<li><code>{html.escape(p)}</code> {html.escape(v)} &mdash; {html.escape(d)}</li>")
+PYEND
 
 until=$(sed -n 's/^Valid-Until: //p' "dists/$SUITE/Release")
 echo
