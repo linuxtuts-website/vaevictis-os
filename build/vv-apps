@@ -47,8 +47,19 @@ if [ "$APT_REPO" = 1 ]; then
     idx=$(curl -fsS --max-time 20 https://apt.linuxtuts.online/dists/vaevictis/InRelease) \
         || die "cannot read https://apt.linuxtuts.online/dists/vaevictis/InRelease (network?)"
     printf '%s\n' "$idx" | grep -q '^-----BEGIN PGP SIGNED MESSAGE-----' || die "the published index is not signed"
-    printf '%s\n' "$idx" | grep -q '^Valid-Until: ' \
-        || die "the published index has no Valid-Until: publish it with vv-apt-publish first"
+    # ... signed by the archive key (checked with nothing but the key in this repository) ...
+    vtmp=$(mktemp -d)
+    gpg --dearmor < "$ROOT/packaging/archive-keyring/vaevictis-archive-keyring.asc" > "$vtmp/k.gpg" 2>/dev/null
+    printf '%s\n' "$idx" > "$vtmp/InRelease"
+    gpgv --keyring "$vtmp/k.gpg" "$vtmp/InRelease" >/dev/null 2>&1 \
+        || { rm -rf "$vtmp"; die "the published index is NOT signed by the archive key: stop and check"; }
+    rm -rf "$vtmp"
+    # ... and it expires, not too soon
+    until=$(printf '%s\n' "$idx" | sed -n 's/^Valid-Until: //p' | head -n 1)
+    [ -n "$until" ] || die "the published index has no Valid-Until: publish it with vv-apt-publish first"
+    left=$(( ( $(date -d "$until" +%s) - $(date +%s) ) / 86400 ))
+    [ "$left" -ge 7 ] || die "the published index expires in $left day(s) ($until): re-sign it with vv-apt-publish first"
+    echo "  published index: signed by the archive key, valid until $until"
 fi
 
 BK="$(dirname "$CH")/vv-backups/$(date +%Y%m%d-%H%M%S)"
@@ -124,6 +135,9 @@ inst 0644 "$HERE/vv-vpn.desktop"          usr/share/applications/vv-vpn.desktop
 inst 0755 "$HERE/vv-vpn.desktop"          etc/skel/Desktop/vv-vpn.desktop
 install -d -m 0755 "$CH/var/lib/vv-vpn"
 install -d -m 0700 "$CH/etc/wireguard"
+
+echo "== NVIDIA driver helper"
+[ -f "$HERE/vv-nvidia" ] && inst 0755 "$HERE/vv-nvidia" usr/local/sbin/vv-nvidia
 
 echo "== installer"
 inst 0755 "$HERE/vaevictis_install.sh"      usr/local/bin/vaevictis_install.sh
