@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # vv-release - turn the newest ISO into a publishable release
 #
-#   vv-release [VERSION] [--iso PATH] [--sign] [--force]
+#   vv-release [VERSION] [--iso PATH] [--sign [--key FINGERPRINT]] [--force]
 #
 # 1. refuses to continue if the chroot still holds anything personal (see GATES below)
 # 2. writes release/VERSION/: the ISO, SHA256SUMS (+ signature with --sign), sbom.cdx.json (CycloneDX),
 #    PACKAGES.txt, SOURCES.txt, grub.cfg.txt (the exact boot options) and BUILD-INFO.txt
 #
 # Run it as your normal user (gpg must use YOUR key). It asks for sudo only to read root-only files.
-# Variables: VV_CHROOT, VV_OUT (ISO folder), VV_REL (release folder), VV_REPO_URL (printed in SOURCES.txt)
+# Variables: VV_CHROOT, VV_OUT (ISO folder), VV_REL (release folder), VV_REPO_URL (printed in SOURCES.txt),
+#            VV_SIGN_KEY (the release key, same as --key). With several secret keys the key MUST be named: the
+#            signature and the exported public key are always the same, chosen key (never "whatever gpg picks").
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
@@ -16,13 +18,14 @@ CH="${VV_CHROOT:-/run/media/user/Mio/Backup_VaeVictis_Completo/vaevictis/new/chr
 CH="$(realpath -m "$CH")"
 OUT="${VV_OUT:-$HERE/iso-out}"
 REL="${VV_REL:-$HERE/release}"
-REPO_URL="${VV_REPO_URL:-https://github.com/YOUR-ACCOUNT/vaevictis}"
-VER=""; ISO=""; SIGN=0; FORCE=0
+REPO_URL="${VV_REPO_URL:-https://github.com/linuxtuts-website/vaevictis-os}"
+VER=""; ISO=""; SIGN=0; FORCE=0; KEY="${VV_SIGN_KEY:-}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --iso)   ISO="$2"; shift 2 ;;
         --sign)  SIGN=1; shift ;;
+        --key)   KEY="$2"; shift 2 ;;
         --force) FORCE=1; shift ;;
         -*)      echo "unknown option: $1" >&2; exit 2 ;;
         *)       VER="$1"; shift ;;
@@ -83,10 +86,24 @@ echo "[2/5] checksums"
 ( cd "$DEST" && sha256sum "$NAME" > SHA256SUMS )
 if [ "$SIGN" = 1 ]; then
     command -v gpg >/dev/null || die "gpg not found"
-    ( cd "$DEST" && rm -f SHA256SUMS.asc && gpg --armor --detach-sign --output SHA256SUMS.asc SHA256SUMS ) \
+    if [ -z "$KEY" ]; then
+        # only when there is exactly one secret key: its fingerprint (the first "fpr" line after "sec")
+        nsec=$(gpg --list-secret-keys --with-colons 2>/dev/null | grep -c '^sec:' || true)
+        [ "$nsec" = 1 ] || die "name the release key: --key FINGERPRINT (gpg --list-secret-keys shows them)"
+        KEY=$(gpg --list-secret-keys --with-colons 2>/dev/null | awk -F: '$1 == "fpr" {print $10; exit}')
+    fi
+    gpg --list-secret-keys "$KEY" >/dev/null 2>&1 || die "no secret key '$KEY' in your keyring"
+    ( cd "$DEST" && rm -f SHA256SUMS.asc && gpg --local-user "$KEY" --armor --detach-sign --output SHA256SUMS.asc SHA256SUMS ) \
         || die "signing failed: create a key first (gpg --quick-generate-key 'VaeVictis Release <you@example.org>')"
-    gpg --armor --export > "$DEST/vaevictis-release-key.asc" 2>/dev/null || true
-    echo "      signed: SHA256SUMS.asc (+ public key)"
+    gpg --armor --export "$KEY" > "$DEST/vaevictis-release-key.asc" && [ -s "$DEST/vaevictis-release-key.asc" ] \
+        || die "could not export the public key of $KEY"
+    # check it as a user would: with ONLY the published key
+    vtmp=$(mktemp -d)
+    gpg --homedir "$vtmp" --quiet --import "$DEST/vaevictis-release-key.asc" 2>/dev/null
+    gpg --homedir "$vtmp" --quiet --verify "$DEST/SHA256SUMS.asc" "$DEST/SHA256SUMS" 2>/dev/null \
+        || { rm -rf "$vtmp"; die "the signature does not verify with the exported key"; }
+    rm -rf "$vtmp"
+    echo "      signed with $KEY: SHA256SUMS.asc (+ that public key, checked)"
 else
     echo "      not signed (add --sign once you have a GPG key)"
 fi

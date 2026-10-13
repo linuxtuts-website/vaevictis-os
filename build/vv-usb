@@ -51,6 +51,11 @@ fi
 echo "writing..."
 dd if="$iso" of="$dev" bs=4M status=progress conv=fsync$([ -n "$test_mode" ] && echo ",notrunc")
 sync
+# Read the stick itself, not the copy the kernel still keeps in memory: drop the cache of the device first
+if [ -z "$test_mode" ]; then
+    blockdev --flushbufs "$dev" 2>/dev/null || true
+    echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+fi
 echo "checking what was written (reads the stick back)..."
 if cmp -n "$isosize" "$iso" "$dev"; then
     echo "OK: the stick matches the ISO byte for byte."
