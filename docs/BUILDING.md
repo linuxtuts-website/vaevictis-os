@@ -30,7 +30,7 @@ A Debian or Ubuntu machine with: `debootstrap`, `squashfs-tools`, `xorriso`, `mt
      APT repository (only when the conditions at the top of `vv-apps` hold: two-factor login on GitHub and Cloudflare, a signed
      index with an expiry date)
    - `./vv-branding`: icons, Welcome window, login screen, system identity (it also removes what 1.0 builds had of the HIDS)
-   - `./vv-boot-theme`: the GRUB menu and the Plymouth boot screen (it rebuilds the chroot's initramfs)
+   - `./vv-boot-theme`: the GRUB menu, the Plymouth boot screen and the desktop wallpaper (it rebuilds the chroot's initramfs)
    - optional: `vv-nvidia` is installed by `vv-apps`; it is run by the user on the installed system
 4. **Replace the personal user with the live user.** `./vv-liveuser` shows the plan, `./vv-liveuser --apply` does it.
 5. **Seal the chroot.** `./vv-chroot seal` removes machine-id, SSH host keys, shell history, logs and other leftovers.

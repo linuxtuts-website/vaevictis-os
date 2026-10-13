@@ -205,9 +205,19 @@ while true; do
     else
         echo "Set the keyboard of this session to '$KB_INPUT' (menu at the top right of the screen) before going on."
     fi
-    read -rp "Keyboard check: looking at the labels on your keys, type   qwaz ym 159   and press Enter: " KB_TEST || KB_TEST=""
-    [ "$KB_TEST" = "qwaz ym 159" ] && break
-    echo "You typed '$KB_TEST': your keys do not match the '$KB_INPUT' layout. Enter the layout of YOUR keyboard."
+    # Some letters sit in other places on other keyboards (German QWERTZ: Y and Z swapped; French AZERTY: A/Q, Z/W
+    # swapped, numbers need Shift). Typing these letters with the chosen layout catches a wrong choice before it matters.
+    echo
+    echo "Keyboard check: some keyboards have letters in other places (German: Y and Z swapped; French: A/Q and Z/W"
+    echo "swapped). Look at the letters printed on your keys and type the text between the brackets, spaces included:"
+    echo
+    echo "        [ qwaz ym 159 ]"
+    echo
+    read -rp "Type it here and press Enter: " KB_TEST || KB_TEST=""
+    KB_TEST="${KB_TEST#"${KB_TEST%%[![:space:]]*}"}"; KB_TEST="${KB_TEST%"${KB_TEST##*[![:space:]]}"}"   # trim spaces at both ends
+    [ "${KB_TEST,,}" = "qwaz ym 159" ] && break        # capitals do not matter here: only where the letters are
+    echo "You typed '$KB_TEST' instead of 'qwaz ym 159': your keys do not match the '$KB_INPUT' layout."
+    echo "Enter the layout of YOUR keyboard (or type the check again carefully)."
 done
 GRUB_SAFE=$(/usr/local/sbin/vv-grub-password --safe-chars "$KB_INPUT")
 GRUB_DESC=$(/usr/local/sbin/vv-grub-password --describe "$KB_INPUT")
@@ -896,8 +906,11 @@ grep -q '^password_pbkdf2 grub grub\.pbkdf2\.sha512\.' "$TARGET/boot/grub/grub.c
     && grep -q -- '--unrestricted' "$TARGET/boot/grub/grub.cfg" \
     || die "grub.cfg does not contain the boot menu password: refusing to finish."
 chmod 0600 "$TARGET/boot/grub/grub.cfg"
+# GRUB_BACKGROUND="" (vv-grub-theme) keeps Debian's script from adding a picture behind the black theme
+grep -q 'background_image' "$TARGET/boot/grub/grub.cfg" \
+    && warn "grub.cfg loads a background picture: the boot screens will show it behind the messages (check GRUB_BACKGROUND)."
 echo "Boot menu password: active (user grub)."
-echo "GRUB entries:"; grep -E "^menuentry" "$TARGET/boot/grub/grub.cfg" | cut -d"'" -f2 | sed 's/^/   - /'
+echo "GRUB entries:"; grep -E "^menuentry " "$TARGET/boot/grub/grub.cfg" | cut -d"'" -f2 | sed 's/^/   - /'
 
 # ---------------------------------------------------------------- done
 log "Unmounting filesystems..."

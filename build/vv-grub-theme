@@ -27,8 +27,7 @@ for f in "$SRC"/*; do
     install -m 0644 "$f" "$THEME/"
 done
 
-# GRUB's own settings: a theme replaces GRUB_BACKGROUND; let GRUB pick the screen mode
-sed -i -E '/^#?[[:space:]]*GRUB_BACKGROUND=/d' "$DEFAULTS"
+# GRUB's own settings
 setvar() {   # setvar NAME VALUE (replace the line if there is one, add it otherwise)
     if grep -qE "^#?[[:space:]]*$1=" "$DEFAULTS"; then
         sed -i -E "s|^#?[[:space:]]*$1=.*|$1=$2|" "$DEFAULTS"
@@ -38,6 +37,10 @@ setvar() {   # setvar NAME VALUE (replace the line if there is one, add it other
 }
 setvar GRUB_THEME '"/boot/grub/themes/vaevictis/theme.txt"'
 setvar GRUB_GFXMODE 'auto'
+# GRUB_BACKGROUND set but EMPTY: without it Debian's /etc/grub.d/05_debian_theme adds a background picture of its own
+# (a picture in /boot/grub, or the one of desktop-base), which shows behind the password prompt, the editor and the
+# "Loading Linux" messages. Empty means "no picture": those screens stay black like the theme.
+setvar GRUB_BACKGROUND '""'
 
 echo "theme written to ${THEME#"$ROOT"} ($(ls "$THEME" | wc -l) files)"
 if [ -z "${VV_NO_UPDATE:-}" ] && [ -z "$ROOT" ]; then

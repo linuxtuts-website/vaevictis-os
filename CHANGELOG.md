@@ -10,9 +10,12 @@ Safer by default. Systems installed from 1.0 still need the [2026-10-12 security
   needs user `grub` and that password (PBKDF2, 210000 rounds), which must differ from the other passwords and use only keys
   that GRUB's US keyboard reads the same. `sudo vv-grub-password` changes it.
 - **New boot screens** (style A, minimal, violet): GRUB menu with the logo, and a Plymouth screen with a thin progress bar and the
-  disk passphrase box (any length, the keyboard in use, error messages shown). `Esc` still shows every boot message.
+  disk passphrase box (any length, the keyboard in use, error messages shown). `Esc` still shows every boot message. The
+  password prompt, the editor and the start messages of GRUB stay black (no leftover picture behind them). New wallpaper in the
+  same style, the default for desktop and lock screen (every user can choose another one).
 - **Installer:** free space shown before every size question and each size checked; the root partition must hold the system;
-  whole disks only; mount points checked; the live session switches to your keyboard layout and a typing test checks it;
+  whole disks only; mount points checked; the live session switches to your keyboard layout and a typing test, with its reason
+  explained, checks it;
   SSD TRIM before partitioning; `/boot` and EFI `nosuid,nodev,noexec`, `/home` and data partitions `nosuid,nodev`; the disk
   passphrase is cleared from memory after use; no "Install" launcher on installed systems.
 - **Sandbox for the programs that open files from anywhere:** Aurora, LinPaint+ and VaeVictis PDF run in bubblewrap with no

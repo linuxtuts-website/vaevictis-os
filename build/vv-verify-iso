@@ -96,7 +96,7 @@ etc/initramfs-tools/hooks/vaevictis-plymouth boot/initramfs-hook
 EOF
 
 head_ "Must exist"
-for f in usr/share/backgrounds/vaevictis.png usr/share/applications/vv-vpn.desktop usr/bin/ffmpegthumbnailer \
+for f in usr/share/backgrounds/vaevictis/vaevictis-dots.jpg usr/share/gnome-background-properties/vaevictis.xml usr/share/applications/vv-vpn.desktop usr/bin/ffmpegthumbnailer \
          usr/lib/systemd/system-generators/systemd-cryptsetup-generator etc/nftables.conf; do
     exists "$f" && ok "$f" || bad "$f is missing"
 done
@@ -125,6 +125,12 @@ cat_of etc/sudoers.d/99-vv-panic | grep -q '^%sudo ALL=(root) NOPASSWD: /usr/loc
     && ok "panic sudoers rule: administrators only" || bad "panic sudoers rule is not limited to %sudo (run vv-secure)"
 cat_of etc/apt/apt.conf.d/99-vaevictis-no-bloat | grep -q 'Install-Recommends "false"' && ok "apt: no recommends (vv-apps)" \
     || bad "apt no-bloat setting missing (run vv-apps)"
+wp="file:///usr/share/backgrounds/vaevictis/vaevictis-dots.jpg"
+cat_of etc/dconf/db/vaevictis.d/90-wallpaper-vaevictis | grep -qx "picture-uri='$wp'" \
+    && cat_of etc/dconf/db/vaevictis | grep -aq "$wp" \
+    && cat_of usr/share/glib-2.0/schemas/99-vaevictis-background.gschema.override | grep -qx "picture-uri='$wp'" \
+    && ok "wallpaper: default for every user (dconf database compiled, GSettings override)" \
+    || bad "wallpaper default missing or dconf database not updated (run vv-boot-theme)"
 cat_of etc/plymouth/plymouthd.conf | grep -qx 'Theme=vaevictis' && ok "Plymouth default theme: vaevictis" || bad "Plymouth theme is not vaevictis (run vv-boot-theme)"
 grep_os="$(cat_of usr/lib/os-release)"
 printf '%s\n' "$grep_os" | grep -qx 'VERSION_ID="1.1"' && printf '%s\n' "$grep_os" | grep -q '^HOME_URL="https://vaevictisos.org"' \
