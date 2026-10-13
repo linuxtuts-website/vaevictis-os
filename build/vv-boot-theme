@@ -49,7 +49,9 @@ echo "== pictures and fonts (made inside the chroot, from build/boot)"
 work="$CH/tmp/vv-boot-theme"
 rm -rf "$work"; install -d -m 0755 "$work/src"
 cp "$B/make-images.py" "$B/vaevictis-logo.png" "$work/src/"
-"$VVC" run /bin/sh -c '
+# (the output is kept and checked afterwards: "| grep -q" would close the pipe early, and vv-chroot, still writing,
+#  would then fail under pipefail even when everything worked)
+out=$("$VVC" run /bin/sh -c '
 set -e
 python3 -I /tmp/vv-boot-theme/src/make-images.py /tmp/vv-boot-theme/out
 F=/usr/share/fonts/truetype/ibm-plex
@@ -61,7 +63,9 @@ grub-mkfont -r $R -n "VV Mono"        -s 17 -o $G/vv-mono-17.pf2        $F/IBMPl
 grub-mkfont -r $R -n "VV Mono Medium" -s 17 -o $G/vv-mono-medium-17.pf2 $F/IBMPlexMono-Medium.ttf  2>/dev/null
 grub-mkfont -r $R -n "VV Mono"        -s 13 -o $G/vv-mono-13.pf2        $F/IBMPlexMono-Regular.ttf 2>/dev/null
 grub-mkfont -r $R -n "VV Mono"        -s 16 -o $G/vv-mono-16.pf2        $F/IBMPlexMono-Regular.ttf 2>/dev/null
-echo "VVOK $(ls $G/*.pf2 | wc -l)"' | grep -q '^VVOK 5$' || die "making the pictures or the GRUB fonts failed (see the messages above)"
+echo "VVOK $(ls $G/*.pf2 | wc -l)"' 2>&1) || true
+printf '%s\n' "$out" | grep -v '^VVOK' | sed 's/^/  /'
+printf '%s\n' "$out" | grep -qx 'VVOK 5' || die "making the pictures or the GRUB fonts failed (see the messages above)"
 
 echo "== GRUB theme: /usr/share/vaevictis/grub-theme"
 T="$CH/usr/share/vaevictis/grub-theme"
@@ -84,9 +88,9 @@ rm -rf "$work"
 echo "== default theme, then the initramfs (a minute)"
 "$VVC" run /bin/sh -c 'plymouth-set-default-theme vaevictis && echo "  default theme: $(plymouth-set-default-theme)" && update-initramfs -u -k all >/dev/null && echo "  initramfs rebuilt"' \
     || die "could not set the theme or rebuild the initramfs"
-"$VVC" run /bin/sh -c 'f=$(readlink -f /initrd.img); echo "VVOK $(lsinitramfs "$f" | grep -c -e "plymouth/themes/vaevictis/vaevictis.script" -e "ibm-plex/IBMPlexSans-Regular.ttf")"' \
-    | grep -q '^VVOK 2$' && echo "  the initramfs has the theme and its fonts" \
-    || echo "  WARNING: the initramfs lacks the theme or its fonts: the boot screen falls back to text"
+out=$("$VVC" run /bin/sh -c 'f=$(readlink -f /initrd.img); echo "VVOK $(lsinitramfs "$f" | grep -c -e "plymouth/themes/vaevictis/vaevictis.script" -e "ibm-plex/IBMPlexSans-Regular.ttf")"' 2>&1) || true
+if printf '%s\n' "$out" | grep -qx 'VVOK 2'; then echo "  the initramfs has the theme and its fonts"
+else echo "  WARNING: the initramfs lacks the theme or its fonts: the boot screen falls back to text"; fi
 
 cat <<EOF
 
