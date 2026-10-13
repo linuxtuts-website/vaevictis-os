@@ -13,6 +13,7 @@ import math
 import time
 import socket
 import fcntl
+import html
 import subprocess
 from pathlib import Path
 from datetime import timedelta
@@ -900,7 +901,7 @@ class Aurora(QMainWindow):
                 try:
                     result = subprocess.run(
                         ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
-                         '-of', 'default=noprint_wrappers=1:nokey=1', path],
+                         '-of', 'default=noprint_wrappers=1:nokey=1', os.path.abspath(path)],
                         capture_output=True, text=True, timeout=5
                     )
                     if result.stdout.strip():
@@ -981,11 +982,14 @@ class Aurora(QMainWindow):
             return
 
         meta = self._get_meta(path)
-        self.lbl_info.setText(f"<span style='font-weight:bold; font-size:14px; color:#ffffff;'>{meta['title']}</span><br><span style='color:#a0a0a5; font-size:12px; font-weight:normal;'>{meta['artist']}</span>")
+        # title and artist come from the file's tags: escape them, so they are shown as text and never read as markup
+        title, artist = html.escape(str(meta['title'])), html.escape(str(meta['artist']))
+        self.lbl_info.setText(f"<span style='font-weight:bold; font-size:14px; color:#ffffff;'>{title}</span><br><span style='color:#a0a0a5; font-size:12px; font-weight:normal;'>{artist}</span>")
         
         try:
             icon_arg = self.icon_path if os.path.exists(self.icon_path) else 'multimedia-audio-player'
-            subprocess.Popen(['notify-send', '-a', 'Aurora', '-i', icon_arg, meta['title'], meta['artist']])
+            # "--": a title starting with "-" is text, not an option; the body is markup for GNOME, so it is escaped
+            subprocess.Popen(['notify-send', '-a', 'Aurora', '-i', icon_arg, '--', str(meta['title']), html.escape(str(meta['artist']))])
         except Exception:
             pass
         

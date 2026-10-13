@@ -90,6 +90,13 @@ def ranges(pages):
             out.append((p, p))
     return out
 
+def _box(parent, icon, title, text):
+    """A message box that shows its text as PLAIN text: names, errors and metadata come from the file and must never
+    be read as formatting or links."""
+    box = QMessageBox(icon, title, str(text), QMessageBox.StandardButton.Ok, parent)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    return box.exec()
+
 def pix_to_qimage(pix):
     return QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
 
@@ -449,6 +456,7 @@ class VaeVictisPDF(QMainWindow):
         self.scroll.pageStep.connect(self._wheel_page)
         self.scroll.resized.connect(self.fit_timer.start)
         self.image_label = QLabel()
+        self.image_label.setTextFormat(Qt.TextFormat.PlainText)
         self.image_label.setObjectName("empty")
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setContentsMargins(PAD, PAD, PAD, PAD)
@@ -540,7 +548,7 @@ class VaeVictisPDF(QMainWindow):
     def _authenticated_doc(self, path, password=None):
         try: doc = fitz.open(path)
         except Exception as e:
-            QMessageBox.critical(self, "Cannot open", f"{os.path.basename(path)}\n\n{e}")
+            _box(self, QMessageBox.Icon.Critical, "Cannot open", f"{os.path.basename(path)}\n\n{e}")
             return None, None
         if doc.needs_pass:
             if password is not None and doc.authenticate(password): return doc, password
@@ -548,7 +556,7 @@ class VaeVictisPDF(QMainWindow):
                 pw, ok = QInputDialog.getText(self, "Password required", f"{os.path.basename(path)} is encrypted.\nPassword:", QLineEdit.EchoMode.Password)
                 if not ok: doc.close(); return None, None
                 if doc.authenticate(pw): return doc, pw
-            QMessageBox.warning(self, "Wrong password", "Could not unlock the document.")
+            _box(self, QMessageBox.Icon.Warning, "Wrong password", "Could not unlock the document.")
             doc.close()
             return None, None
         return doc, None
@@ -557,7 +565,7 @@ class VaeVictisPDF(QMainWindow):
         doc, pw = self._authenticated_doc(path, password)
         if doc is None: return False
         if len(doc) == 0:
-            QMessageBox.warning(self, "Empty document", "This PDF has no pages.")
+            _box(self, QMessageBox.Icon.Warning, "Empty document", "This PDF has no pages.")
             doc.close()
             return False
         if self.doc: self.doc.close()
@@ -758,7 +766,7 @@ class VaeVictisPDF(QMainWindow):
             doc = fitz.open("pdf", data)
             if doc.needs_pass: doc.authenticate(self.password or "")
         except Exception as e:
-            QMessageBox.warning(self, "Undo failed", str(e))
+            _box(self, QMessageBox.Icon.Warning, "Undo failed", str(e))
             return
         self.doc.close()
         self.doc = doc
@@ -783,7 +791,7 @@ class VaeVictisPDF(QMainWindow):
         if not self.doc: return
         pages = self._selected_pages()
         if len(pages) >= len(self.doc):
-            QMessageBox.warning(self, "Delete pages", "A PDF must keep at least one page.")
+            _box(self, QMessageBox.Icon.Warning, "Delete pages", "A PDF must keep at least one page.")
             return
         self._push_undo()
         for p in sorted(pages, reverse=True): self.doc.delete_page(p)
@@ -841,7 +849,7 @@ class VaeVictisPDF(QMainWindow):
                 self.doc.insert_pdf(d2, start_at=pos)
                 pos += len(d2)
                 added += len(d2)
-            except Exception as e: QMessageBox.warning(self, "Merge failed", f"{os.path.basename(name)}\n\n{e}")
+            except Exception as e: _box(self, QMessageBox.Icon.Warning, "Merge failed", f"{os.path.basename(name)}\n\n{e}")
             finally: d2.close()
         if not added: self.undo_stack.pop(); return
         self.last_dir = os.path.dirname(names[0])
@@ -862,9 +870,9 @@ class VaeVictisPDF(QMainWindow):
         try:
             new = fitz.open()
             for a, b in ranges(pages): new.insert_pdf(self.doc, from_page=a, to_page=b)
-            new.save(name, garbage=3, deflate=True)
+            new.save(name, **self._save_opts())
             new.close()
-        except Exception as e: QMessageBox.warning(self, "Extract failed", str(e)); return
+        except Exception as e: _box(self, QMessageBox.Icon.Warning, "Extract failed", str(e)); return
         self.last_dir = os.path.dirname(name)
         self.statusBar().showMessage(f"Saved {len(pages)} page(s) to {os.path.basename(name)}", 5000)
 
@@ -888,23 +896,40 @@ class VaeVictisPDF(QMainWindow):
                 if dlg.wasCanceled(): break
                 new = fitz.open()
                 new.insert_pdf(self.doc, from_page=i, to_page=i)
-                new.save(t, garbage=3, deflate=True)
+                new.save(t, **self._save_opts())
                 new.close()
                 done += 1
-        except Exception as e: QMessageBox.warning(self, "Split failed", str(e))
+        except Exception as e: _box(self, QMessageBox.Icon.Warning, "Split failed", str(e))
         dlg.setValue(n)
         self.last_dir = folder
         self.statusBar().showMessage(f"Wrote {done} file(s) to {folder}", 6000)
 
+    def _save_opts(self):
+        """Options for every PDF this program writes: a document opened with a password stays protected by it
+        (also the pages you extract or split off)."""
+        opts = dict(garbage=3, deflate=True)
+        if self.password is not None:
+            opts.update(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=self.password, owner_pw=self.password)
+        return opts
+
     def export_png(self):
         if not self.doc: return
+        if self.password is not None:
+            r = QMessageBox.question(self, "Not protected",
+                "This PDF is protected by a password, but a PNG image cannot be.\n"
+                "The exported page can be opened by anyone who gets the file. Export anyway?")
+            if r != QMessageBox.StandardButton.Yes: return
         stem = Path(self.path).stem if self.path else "page"
         default = os.path.join(self.last_dir, f"{stem}_p{self.current + 1}.png")
         name, _ = QFileDialog.getSaveFileName(self, "Export page as PNG", default, "PNG Image (*.png)")
         if not name: return
         name = name if name.lower().endswith(".png") else name + ".png"
-        try: self.doc[self.current].get_pixmap(dpi=200, alpha=False).save(name)
-        except Exception as e: QMessageBox.warning(self, "Export failed", str(e)); return
+        page = self.doc[self.current]
+        dpi = 200
+        px = (page.rect.width / 72 * dpi) * (page.rect.height / 72 * dpi)
+        if px > MAX_PIXELS: dpi = max(1, int(dpi * (MAX_PIXELS / px) ** 0.5))     # a huge page must not fill the memory
+        try: page.get_pixmap(dpi=dpi, alpha=False).save(name)
+        except Exception as e: _box(self, QMessageBox.Icon.Warning, "Export failed", str(e)); return
         self.statusBar().showMessage(f"Exported {os.path.basename(name)}", 4000)
 
     def save(self):
@@ -924,15 +949,12 @@ class VaeVictisPDF(QMainWindow):
         try:
             fd, tmp = tempfile.mkstemp(suffix=".pdf", prefix=".vvpdf_", dir=os.path.dirname(os.path.abspath(path)))
             os.close(fd)
-            opts = dict(garbage=3, deflate=True)
-            if self.password is not None:
-                opts.update(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=self.password, owner_pw=self.password)
-            self.doc.save(tmp, **opts)
+            self.doc.save(tmp, **self._save_opts())
             if os.path.exists(path): shutil.copymode(path, tmp)
             os.replace(tmp, path)
             tmp = None
         except Exception as e:
-            QMessageBox.critical(self, "Save failed", str(e))
+            _box(self, QMessageBox.Icon.Critical, "Save failed", str(e))
             return False
         finally:
             if tmp and os.path.exists(tmp): os.remove(tmp)
@@ -1004,7 +1026,7 @@ class VaeVictisPDF(QMainWindow):
             ("Created", md.get("creationDate") or "-"),
             ("Encrypted", "yes" if (self.doc.is_encrypted or self.password is not None) else "no"),
         ]
-        QMessageBox.information(self, "Document properties", "\n".join(f"{k}:  {v}" for k, v in rows))
+        _box(self, QMessageBox.Icon.Information, "Document properties", "\n".join(f"{k}:  {v}" for k, v in rows))
 
 def apply_dark_palette(app):
     pal = QPalette()

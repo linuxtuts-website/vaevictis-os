@@ -165,11 +165,12 @@ class VPNManager(Gtk.Window):
         self.btn_main.connect("clicked", self.on_main)
         root.pack_start(self.btn_main, False, False, 0)
 
-        # kill switch: with it on, nothing leaves this PC except through the tunnel
+        # kill switch: with it on, nothing leaves this PC or its VMs except through the tunnel
         self.chk_ks = Gtk.CheckButton(label="Kill switch: block all traffic if the tunnel drops")
         self.chk_ks.set_tooltip_text(
-            "Blocks every packet that does not go through the VPN (and the DHCP the network needs).\n"
-            "Needs a full-tunnel config (AllowedIPs = 0.0.0.0/0). Lasts until you disconnect, release it or reboot.")
+            "Blocks every packet from this PC and its virtual machines that does not go through the VPN\n"
+            "(except the DHCP the network needs), also while the tunnel reconnects or fails to.\n"
+            "Needs a full-tunnel config (AllowedIPs = 0.0.0.0/0). Lasts until you disconnect, release it or restart.")
         self._sync = True
         self.chk_ks.set_active(ks_pref())
         self._sync = False

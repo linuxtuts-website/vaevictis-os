@@ -1080,24 +1080,63 @@ class LinPaint:
         self.refresh()
         self.update_title()
 
-    def copy_to_clipboard(self):
-        try:
-            from PIL import ImageGrab  # noqa: F401
-            self.img.show()
-            messagebox.showinfo("Copy", "Image copied")
-        except ImportError:
-            messagebox.showwarning("Notice", "Install full Pillow for clipboard")
+    def _wayland(self):
+        return (os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+                or bool(os.environ.get("WAYLAND_DISPLAY")))
+
+    def copy_to_clipboard(self):  # CLIPBOARD-PATCH
+        """Put the image on the system clipboard as PNG (wl-copy on Wayland, xclip on X11)."""
+        import io
+        buf = io.BytesIO()
+        self.img.save(buf, "PNG")
+        data = buf.getvalue()
+        cmds = []
+        if self._wayland() and shutil.which("wl-copy"):
+            cmds.append(["wl-copy", "--type", "image/png"])
+        if shutil.which("xclip"):
+            cmds.append(["xclip", "-selection", "clipboard", "-t", "image/png"])
+        if not self._wayland() and shutil.which("wl-copy"):
+            cmds.append(["wl-copy", "--type", "image/png"])
+        for cmd in cmds:
+            try:
+                subprocess.run(cmd, input=data, check=True, timeout=10,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                continue
+            self.status.config(text="✓ Image copied to the clipboard")
+            return
+        messagebox.showwarning(
+            APP_NAME, "Cannot copy the image.\n\nInstall wl-clipboard (Wayland) or xclip (X11).")
 
     def paste_from_clipboard(self):
         try:
             from PIL import ImageGrab
             img = ImageGrab.grabclipboard()
-            if img:
-                self.push_undo()
-                self.img = img.convert("RGB")
-                self.refresh()
         except ImportError:
-            messagebox.showwarning("Notice", "Install full Pillow for clipboard")
+            messagebox.showwarning(APP_NAME, "Install full Pillow for clipboard")
+            return
+        except Exception as e:  # on Linux Pillow needs wl-paste or xclip
+            messagebox.showwarning(
+                APP_NAME,
+                f"Cannot read the clipboard:\n{e}\n\nInstall wl-clipboard (Wayland) or xclip (X11).")
+            return
+        if isinstance(img, list):  # a copied file: use the first one that opens as an image
+            opened = None
+            for p in img:
+                try:
+                    opened = Image.open(p)
+                    opened.load()
+                    break
+                except Exception:
+                    opened = None
+            img = opened
+        if img is None:
+            self.status.config(text="Nothing to paste: the clipboard has no image")
+            return
+        self.push_undo()
+        self.img = img.convert("RGB")
+        self.refresh()
+        self.status.config(text="✓ Pasted from the clipboard")
 
     def cancel_operation(self):
         self.cancel_text()
@@ -1381,7 +1420,7 @@ class LinPaint:
             f"• Ctrl+N/O/S/Z/Y - New/Open/Save/Undo/Redo\n"
             f"• Ctrl+Shift+F/A - Full screen/Area\n"
             f"• +/-/0 - Zoom\n\n"
-            f"MIT License")
+            f"GNU GPL v3 or later")
 
     def on_mousewheel(self, event):
         if event.delta > 0:

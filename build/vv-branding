@@ -9,7 +9,7 @@
 #   3. installs the vv-welcome file that sits next to this script (dark window, its own icon,
 #      live security status) so the dock no longer shows a generic icon while it is open
 #   4. removes the "debian 13" logo from the GDM login screen
-#   5. system identity: os-release and issue say VaeVictis and point to https://linuxtuts.online
+#   5. system identity: os-release and issue say VaeVictis and point to https://vaevictisos.org
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
@@ -287,14 +287,14 @@ bak "$CH/usr/lib/os-release"
 cat > "$CH/usr/lib/os-release" <<EOF
 PRETTY_NAME="VaeVictis OS"
 NAME="VaeVictis OS"
-VERSION_ID="1.0.1"
-VERSION="1.0.1 (Hardened)"
+VERSION_ID="1.1"
+VERSION="1.1 (Hardened)"
 VERSION_CODENAME=trixie
 ID=$OS_ID
 ID_LIKE=debian
-HOME_URL="https://linuxtuts.online"
-SUPPORT_URL="https://linuxtuts.online"
-BUG_REPORT_URL="https://linuxtuts.online"
+HOME_URL="https://vaevictisos.org"
+SUPPORT_URL="https://vaevictisos.org"
+BUG_REPORT_URL="https://github.com/linuxtuts-website/vaevictis-os/security"
 LOGO=vv-welcome
 EOF
 [ -L "$CH/etc/os-release" ] || cp "$CH/usr/lib/os-release" "$CH/etc/os-release"
