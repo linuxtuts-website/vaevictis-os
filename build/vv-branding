@@ -247,14 +247,7 @@ for n in local site; do
     [ -e "$CH/etc/dconf/db/$n" ] || sed -i "/^system-db:$n[[:space:]]*\$/d" "$CH/etc/dconf/profile/user"
 done
 
-echo "== boot menu theme (the menu sits in the centre, below the wallpaper title)"
-if [ -f "$HERE/vv-grub-theme" ]; then
-    install -d -m 0755 "$CH/usr/local/sbin"
-    install -m 0755 "$HERE/vv-grub-theme" "$CH/usr/local/sbin/vv-grub-theme"
-    echo "  /usr/local/sbin/vv-grub-theme (the installer runs it; the live ISO has its own menu)"
-else
-    echo "  skipped: vv-grub-theme is not next to this script (installed systems keep GRUB's plain menu)"
-fi
+# The boot screens (GRUB menu and Plymouth, style A) are made by vv-boot-theme, run after this script.
 
 echo "== login screen: no Debian logo"
 install -d -m 0755 "$CH/etc/dconf/profile" "$CH/etc/dconf/db/gdm.d"

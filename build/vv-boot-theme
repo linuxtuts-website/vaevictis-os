@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# vv-boot-theme - the boot screens of VaeVictis (style A, minimal: black, the logo, violet #7a3cf0) into the chroot:
+#
+#   GRUB menu       /usr/share/vaevictis/grub-theme/  (theme.txt, logo, violet selection box, IBM Plex fonts made
+#                   with grub-mkfont). The installer copies it to /boot/grub/themes/vaevictis (vv-grub-theme), vv-iso
+#                   puts the same theme on the live ISO.
+#   Plymouth        /usr/share/plymouth/themes/vaevictis/ (default theme): logo and a thin progress bar while the system
+#                   starts; the disk passphrase box (dots, the keyboard in use, "Esc shows boot messages").
+#   initramfs hook  /etc/initramfs-tools/hooks/vaevictis-plymouth: puts the theme's fonts into the initramfs and writes
+#                   the keyboard line from /etc/default/keyboard of the system that builds it, so it always tells the
+#                   layout the passphrase is really typed with.
+#
+#   vv-boot-theme        apply (safe to repeat; replaced files are backed up next to the chroot)
+#
+# Needs in the chroot: plymouth, plymouth-label, fonts-ibm-plex, grub-common, python3-pil.
+# Run it after vv-branding; it rebuilds the chroot's initramfs at the end. The kernel needs "splash" on its command
+# line (vv-iso and the installer add it); Esc on the boot screen shows every message, as before.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+CH="${VV_CHROOT:-/run/media/user/Mio/Backup_VaeVictis_Completo/vaevictis/new/chroot}"
+CH="$(realpath -m "$CH")"
+VVC="$HERE/vv-chroot"
+B="$HERE/boot"
+
+die() { echo "vv-boot-theme: $*" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || exec sudo -E VV_CHROOT="$CH" "$0" "$@"
+[ -f "$CH/etc/debian_version" ] && [ "$CH" != "/" ] || die "not a Debian root filesystem: $CH"
+[ -x "$VVC" ] || die "vv-chroot must be next to this script ($VVC)"
+for f in make-images.py vaevictis-logo.png grub-theme.txt vaevictis.script vaevictis.plymouth initramfs-hook; do
+    [ -f "$B/$f" ] || die "missing: build/boot/$f"
+done
+[ -f "$HERE/vv-grub-theme" ] || die "missing next to this script: vv-grub-theme"
+
+BK="$(dirname "$CH")/vv-backups/$(date +%Y%m%d-%H%M%S)"
+bak() { local rel="${1#$CH/}"; [ -e "$1" ] || return 0; mkdir -p "$BK"; (cd "$CH" && cp -a --parents "$rel" "$BK/"); }
+
+echo "== packages the boot screens need"
+"$VVC" run /bin/sh -c '
+miss=""
+for p in plymouth plymouth-label fonts-ibm-plex grub-common python3-pil; do
+    dpkg -s "$p" >/dev/null 2>&1 || miss="$miss $p"
+done
+[ -z "$miss" ] && { echo "  all present"; exit 0; }
+echo "  MISSING:$miss"; exit 1' \
+    || die "install them first:  ./vv-chroot run apt-get install plymouth plymouth-label fonts-ibm-plex"
+
+echo "== pictures and fonts (made inside the chroot, from build/boot)"
+work="$CH/tmp/vv-boot-theme"
+rm -rf "$work"; install -d -m 0755 "$work/src"
+cp "$B/make-images.py" "$B/vaevictis-logo.png" "$work/src/"
+"$VVC" run /bin/sh -c '
+set -e
+python3 -I /tmp/vv-boot-theme/src/make-images.py /tmp/vv-boot-theme/out
+F=/usr/share/fonts/truetype/ibm-plex
+R=0x20-0x7E,0xA0-0xFF,0x2190-0x2193,0x2022-0x2022,0x2026-0x2026,0x2500-0x257F
+G=/tmp/vv-boot-theme/out/grub
+# (grub-mkfont warns about OpenType features GRUB does not use: harmless, hidden)
+grub-mkfont -r $R -n "VV Sans Light"  -s 22 -o $G/vv-sans-light-22.pf2  $F/IBMPlexSans-Light.ttf   2>/dev/null
+grub-mkfont -r $R -n "VV Mono"        -s 17 -o $G/vv-mono-17.pf2        $F/IBMPlexMono-Regular.ttf 2>/dev/null
+grub-mkfont -r $R -n "VV Mono Medium" -s 17 -o $G/vv-mono-medium-17.pf2 $F/IBMPlexMono-Medium.ttf  2>/dev/null
+grub-mkfont -r $R -n "VV Mono"        -s 13 -o $G/vv-mono-13.pf2        $F/IBMPlexMono-Regular.ttf 2>/dev/null
+grub-mkfont -r $R -n "VV Mono"        -s 16 -o $G/vv-mono-16.pf2        $F/IBMPlexMono-Regular.ttf 2>/dev/null
+echo "VVOK $(ls $G/*.pf2 | wc -l)"' | grep -q '^VVOK 5$' || die "making the pictures or the GRUB fonts failed (see the messages above)"
+
+echo "== GRUB theme: /usr/share/vaevictis/grub-theme"
+T="$CH/usr/share/vaevictis/grub-theme"
+bak "$T"; rm -rf "$T"; install -d -m 0755 "$T"
+install -m 0644 "$work/out/grub/"*.png "$work/out/grub/"*.pf2 "$T/"
+install -m 0644 "$B/grub-theme.txt" "$T/theme.txt"
+install -m 0755 "$HERE/vv-grub-theme" "$CH/usr/local/sbin/vv-grub-theme"
+echo "  $(ls "$T" | wc -l) files; /usr/local/sbin/vv-grub-theme (the installer runs it)"
+
+echo "== Plymouth theme: /usr/share/plymouth/themes/vaevictis"
+P="$CH/usr/share/plymouth/themes/vaevictis"
+bak "$P"; rm -rf "$P"; install -d -m 0755 "$P"
+install -m 0644 "$work/out/plymouth/"*.png "$P/"
+install -m 0644 "$B/vaevictis.script" "$P/vaevictis.script"     # "@KEYBOARD@" is filled in by the initramfs hook
+install -m 0644 "$B/vaevictis.plymouth" "$P/vaevictis.plymouth"
+bak "$CH/etc/initramfs-tools/hooks/vaevictis-plymouth"
+install -D -m 0755 "$B/initramfs-hook" "$CH/etc/initramfs-tools/hooks/vaevictis-plymouth"
+rm -rf "$work"
+
+echo "== default theme, then the initramfs (a minute)"
+"$VVC" run /bin/sh -c 'plymouth-set-default-theme vaevictis && echo "  default theme: $(plymouth-set-default-theme)" && update-initramfs -u -k all >/dev/null && echo "  initramfs rebuilt"' \
+    || die "could not set the theme or rebuild the initramfs"
+"$VVC" run /bin/sh -c 'f=$(readlink -f /initrd.img); echo "VVOK $(lsinitramfs "$f" | grep -c -e "plymouth/themes/vaevictis/vaevictis.script" -e "ibm-plex/IBMPlexSans-Regular.ttf")"' \
+    | grep -q '^VVOK 2$' && echo "  the initramfs has the theme and its fonts" \
+    || echo "  WARNING: the initramfs lacks the theme or its fonts: the boot screen falls back to text"
+
+cat <<EOF
+
+Done. Backups of replaced files: $BK (only if something was replaced)
+EOF

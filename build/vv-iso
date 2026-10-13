@@ -26,66 +26,45 @@ die() { echo "vv-iso: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing tool: $1 ($2)"; }
 latest_iso() { ls -t "$OUT"/vaevictis-*.iso 2>/dev/null | head -1; }
 
-# Menu of the live ISO: GRUB theme (wallpaper + bright cyan entries, same look as the installed system) and grub.cfg.
-# If the theme cannot load, the plain text menu is dark red on black (VGA red).
-# Keep the colours in step with vv-grub-theme. Without the wallpaper in the chroot the menu stays plain text.
+# Menu of the live ISO: the same theme as the installed system (style A, minimal, made by vv-boot-theme into
+# /usr/share/vaevictis/grub-theme) and grub.cfg. If the theme cannot load, GRUB shows a plain text menu.
+# The hardened entries show the VaeVictis boot screen (splash); Esc on it shows every boot message. No "quiet" anywhere.
 live_menu() {                                  # live_menu WORKDIR RELEASE
-    local work="$1" release="$2" Q="" fontline="" head=""
-    local TH="$work/iso/boot/grub/themes/vaevictis" WP="$CH/usr/share/backgrounds/vaevictis.png"
-    # no "quiet", not even in release: the boot messages stay visible (transparency, and you can read problems)
-    if [ -f "$WP" ]; then
-        mkdir -p "$TH"; cp -L "$WP" "$TH/background.png"
-        if [ -f "$CH/usr/share/grub/unicode.pf2" ]; then
-            cp "$CH/usr/share/grub/unicode.pf2" "$TH/unicode.pf2"; fontline='terminal-font: "unicode"'
-        fi
-        cat > "$TH/theme.txt" <<EOT
-# VaeVictis OS live menu: wallpaper as it is, entries in bright cyan
-desktop-image: "background.png"
-title-text: ""
-terminal-left: "0"
-terminal-top: "0"
-terminal-width: "100%"
-terminal-height: "100%"
-terminal-border: "0"
-$fontline
-
-+ boot_menu {
-    left = 10%
-    width = 80%
-    top = 68%
-    height = 28%
-    item_height = 24
-    item_spacing = 6
-    item_color = "#00b8e6"
-    selected_item_color = "#8ff3ff"
-}
-EOT
+    local work="$1" release="$2" Q="" head="" f
+    local TH="$work/iso/boot/grub/themes/vaevictis" SRC="$CH/usr/share/vaevictis/grub-theme"
+    if [ -f "$SRC/theme.txt" ]; then
+        mkdir -p "$TH"; cp "$SRC"/* "$TH/"
         head='if [ -f /boot/grub/themes/vaevictis/theme.txt ]; then
     insmod all_video
     insmod gfxterm
     insmod gfxmenu
-    insmod png
+    insmod png'
+        for f in "$TH"/*.pf2; do
+            [ -f "$f" ] && head="$head
+    loadfont /boot/grub/themes/vaevictis/$(basename "$f")"
+        done
+        head="$head
     set gfxmode=auto
     terminal_output gfxterm
-    background_image -m stretch /boot/grub/themes/vaevictis/background.png
-    if [ -f /boot/grub/themes/vaevictis/unicode.pf2 ]; then loadfont /boot/grub/themes/vaevictis/unicode.pf2; fi
     set theme=/boot/grub/themes/vaevictis/theme.txt
-fi'
+fi"
+    else
+        echo "vv-iso: $SRC not found (run vv-boot-theme): the live menu will be plain text" >&2
     fi
     cat > "$work/iso/boot/grub/grub.cfg" <<EOF
-set color_normal=red/black
-set color_highlight=black/light-red
-set menu_color_normal=red/black
-set menu_color_highlight=black/light-red
+set color_normal=light-gray/black
+set color_highlight=white/magenta
+set menu_color_normal=light-gray/black
+set menu_color_highlight=white/magenta
 $head
 set timeout=5
 set default=0
 menuentry "VaeVictis OS (live, hardened)" {
-    linux  /live/vmlinuz $BOOT_OPTS$Q $HARDEN_OPTS
+    linux  /live/vmlinuz $BOOT_OPTS$Q $HARDEN_OPTS splash
     initrd /live/initrd.img
 }
 menuentry "VaeVictis OS (live, hardened, copy to RAM: you can pull the USB stick)" {
-    linux  /live/vmlinuz $BOOT_OPTS$Q $HARDEN_OPTS toram
+    linux  /live/vmlinuz $BOOT_OPTS$Q $HARDEN_OPTS splash toram
     initrd /live/initrd.img
 }
 menuentry "VaeVictis OS (live, hardened, safe graphics)" {

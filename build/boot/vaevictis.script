@@ -1,0 +1,155 @@
+# VaeVictis OS boot screen (Plymouth), style A (minimal): black, the logo, a thin violet progress bar;
+# when the disk asks for its passphrase: the logo, two lines, the passphrase box with dots, the keyboard in use.
+# Esc always switches to the boot messages (Plymouth's own key) and back.
+# Installed by vv-boot-theme; "@KEYBOARD@" is replaced with the keyboard of the system (e.g. "Keyboard: Italian (it)").
+
+Window.SetBackgroundTopColor(0.039, 0.039, 0.043);
+Window.SetBackgroundBottomColor(0.039, 0.039, 0.043);
+
+W = Window.GetWidth();
+H = Window.GetHeight();
+X0 = Window.GetX();
+Y0 = Window.GetY();
+
+fun centre_x(w) {
+    return X0 + Math.Int((W - w) / 2);
+}
+
+GREY = 0.56;                                   # #8f949c
+SOFT = 0.66;                                   # #a8a29e
+
+# ---------------------------------------------------------------- boot: logo, bar, one line
+logo_image = Image("logo.png");
+logo = Sprite(logo_image);
+
+BAR_W = 220;
+BAR_H = 2;
+track = Sprite(Image("track.png").Scale(BAR_W, BAR_H));
+accent_image = Image("accent.png");
+bar = Sprite();
+
+hint = Sprite(Image.Text("Esc shows every message", GREY, GREY + 0.02, GREY + 0.05, 1, "IBM Plex Mono 10"));
+message = Sprite();
+
+boot_top = Y0 + Math.Int((H - (logo_image.GetHeight() + 44 + BAR_H + 44 + 18)) / 2);
+logo.SetPosition(centre_x(logo_image.GetWidth()), boot_top, 10);
+bar_y = boot_top + logo_image.GetHeight() + 44;
+track.SetPosition(centre_x(BAR_W), bar_y, 10);
+bar.SetPosition(centre_x(BAR_W), bar_y, 11);
+hint_y = bar_y + BAR_H + 44;
+hint.SetPosition(centre_x(hint.GetImage().GetWidth()), hint_y, 10);
+
+fun progress_callback(duration, progress) {
+    w = Math.Int(BAR_W * progress);
+    if (w < 1) w = 1;
+    if (w > BAR_W) w = BAR_W;
+    bar.SetImage(accent_image.Scale(w, BAR_H));
+}
+Plymouth.SetBootProgressFunction(progress_callback);
+
+# Messages (for example "cryptsetup: ... bad password") stay visible on both screens: under the hint while
+# booting, under the passphrase box while it is asked
+pw_visible = 0;
+msg_w = 0;
+fun place_message() {
+    if (pw_visible) message.SetPosition(centre_x(msg_w), esc_y + 28, 22);
+    else message.SetPosition(centre_x(msg_w), hint_y + 28, 10);
+}
+fun message_callback(text) {
+    img = Image.Text(text, 1, 0.55, 0.55, 1, "IBM Plex Mono 10");
+    msg_w = img.GetWidth();
+    message.SetImage(img);
+    place_message();
+}
+Plymouth.SetMessageFunction(message_callback);
+
+fun show_boot(opacity) {
+    logo.SetOpacity(opacity);
+    track.SetOpacity(opacity);
+    bar.SetOpacity(opacity);
+    hint.SetOpacity(opacity);
+}
+
+# ---------------------------------------------------------------- the disk passphrase
+small_logo_image = logo_image.Scale(96, Math.Int(logo_image.GetHeight() * 96 / logo_image.GetWidth()));
+title_image = Image.Text("This disk is encrypted", 0.91, 0.90, 0.89, 1, "IBM Plex Sans 20");
+sub_image = Image.Text("Type your passphrase to start VaeVictis OS", SOFT, 0.64, 0.62, 1, "IBM Plex Sans Light 12");
+label_image = Image.Text("P A S S P H R A S E", SOFT, 0.64, 0.62, 1, "IBM Plex Sans 9");
+field_image = Image("field.png");
+bullet_image = Image("bullet.png");
+keyboard_image = Image.Text("@KEYBOARD@", GREY, GREY + 0.02, GREY + 0.05, 1, "IBM Plex Mono 9");
+esc_image = Image.Text("Esc · show boot messages", GREY, GREY + 0.02, GREY + 0.05, 1, "IBM Plex Mono 10");
+
+FIELD_W = field_image.GetWidth();
+FIELD_H = field_image.GetHeight();
+block_h = small_logo_image.GetHeight() + 40 + title_image.GetHeight() + 10 + sub_image.GetHeight() + 40
+          + label_image.GetHeight() + 10 + FIELD_H + 10 + keyboard_image.GetHeight() + 40 + esc_image.GetHeight();
+y = Y0 + Math.Int((H - block_h) / 2);
+
+p_logo = Sprite(small_logo_image);   p_logo.SetPosition(centre_x(small_logo_image.GetWidth()), y, 20);
+y = y + small_logo_image.GetHeight() + 40;
+p_title = Sprite(title_image);       p_title.SetPosition(centre_x(title_image.GetWidth()), y, 20);
+y = y + title_image.GetHeight() + 10;
+p_sub = Sprite(sub_image);           p_sub.SetPosition(centre_x(sub_image.GetWidth()), y, 20);
+y = y + sub_image.GetHeight() + 40;
+field_x = centre_x(FIELD_W);
+p_label = Sprite(label_image);       p_label.SetPosition(field_x, y, 20);
+y = y + label_image.GetHeight() + 10;
+p_field = Sprite(field_image);       p_field.SetPosition(field_x, y, 20);
+field_y = y;
+y = y + FIELD_H + 10;
+p_keyboard = Sprite(keyboard_image); p_keyboard.SetPosition(field_x, y, 20);
+y = y + keyboard_image.GetHeight() + 40;
+p_esc = Sprite(esc_image);           p_esc.SetPosition(centre_x(esc_image.GetWidth()), y, 20);
+esc_y = y;
+
+BULLET_STEP = 16;
+MAX_BULLETS = Math.Int((FIELD_W - 32) / BULLET_STEP);
+for (i = 0; i < MAX_BULLETS; i++) {
+    dots[i] = Sprite(bullet_image);
+    dots[i].SetPosition(field_x + 16 + i * BULLET_STEP, field_y + Math.Int((FIELD_H - bullet_image.GetHeight()) / 2), 21);
+    dots[i].SetOpacity(0);
+}
+
+fun show_password(opacity) {
+    p_logo.SetOpacity(opacity);
+    p_title.SetOpacity(opacity);
+    p_sub.SetOpacity(opacity);
+    p_label.SetOpacity(opacity);
+    p_field.SetOpacity(opacity);
+    p_keyboard.SetOpacity(opacity);
+    p_esc.SetOpacity(opacity);
+    if (opacity == 0) {
+        for (i = 0; i < MAX_BULLETS; i++) dots[i].SetOpacity(0);
+    }
+}
+show_password(0);
+
+fun password_callback(prompt, bullets) {
+    show_boot(0);
+    show_password(1);
+    pw_visible = 1;
+    place_message();
+    shown = bullets;
+    if (shown > MAX_BULLETS) shown = MAX_BULLETS;     # a long passphrase just fills the box
+    for (i = 0; i < MAX_BULLETS; i++) {
+        if (i < shown) dots[i].SetOpacity(1);
+        else dots[i].SetOpacity(0);
+    }
+}
+Plymouth.SetDisplayPasswordFunction(password_callback);
+
+fun normal_callback() {
+    show_password(0);
+    show_boot(1);
+    pw_visible = 0;
+    place_message();
+}
+Plymouth.SetDisplayNormalFunction(normal_callback);
+
+# Shutdown and reboot: the logo only
+if (Plymouth.GetMode() == "shutdown" || Plymouth.GetMode() == "reboot") {
+    track.SetOpacity(0);
+    bar.SetOpacity(0);
+    hint.SetOpacity(0);
+}

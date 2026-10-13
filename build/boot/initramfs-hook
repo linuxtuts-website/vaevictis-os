@@ -1,0 +1,28 @@
+#!/bin/sh
+# VaeVictis boot screen (installed by vv-boot-theme as /etc/initramfs-tools/hooks/vaevictis-plymouth).
+# Runs after Plymouth's own hook: adds the fonts of the theme, and writes the keyboard line of the passphrase screen
+# from /etc/default/keyboard, the same file the console keymap of this initramfs comes from.
+PREREQ="plymouth"
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+
+T=/usr/share/plymouth/themes/vaevictis
+[ -f "${DESTDIR}${T}/vaevictis.script" ] || exit 0          # another theme is in use: nothing to do
+
+# fonts (IBM Plex) and the fontconfig files that let Plymouth find them
+mkdir -p "${DESTDIR}/usr/share/fonts/truetype/ibm-plex" "${DESTDIR}/etc/fonts/conf.d" "${DESTDIR}/var/cache/fontconfig"
+for f in IBMPlexSans-Regular.ttf IBMPlexSans-Light.ttf IBMPlexMono-Regular.ttf; do
+    [ -f "/usr/share/fonts/truetype/ibm-plex/$f" ] && cp "/usr/share/fonts/truetype/ibm-plex/$f" "${DESTDIR}/usr/share/fonts/truetype/ibm-plex/"
+done
+[ -f "${DESTDIR}/etc/fonts/fonts.conf" ] || cp /etc/fonts/fonts.conf "${DESTDIR}/etc/fonts/" 2>/dev/null || true
+command -v fc-cache >/dev/null 2>&1 && fc-cache -s -y "${DESTDIR}" >/dev/null 2>&1 || true
+
+# the keyboard line, e.g. "Keyboard: Italian (it)"
+layout=$(sed -n 's/^XKBLAYOUT="\{0,1\}\([^",]*\).*/\1/p' /etc/default/keyboard 2>/dev/null | head -n 1)
+layout=${layout:-us}
+name=$(awk -v l="$layout" '/^! layout/ {f = 1; next} /^!/ {f = 0} f && $1 == l {sub(/^[ \t]*[^ \t]+[ \t]+/, ""); print; exit}' \
+       /usr/share/X11/xkb/rules/base.lst 2>/dev/null)
+line=$(printf 'Keyboard: %s (%s)' "${name:-$layout}" "$layout" | tr -cd 'A-Za-z0-9 ():._,-')
+sed -i "s|@KEYBOARD@|$line|" "${DESTDIR}${T}/vaevictis.script"
+exit 0

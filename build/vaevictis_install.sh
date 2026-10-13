@@ -780,6 +780,9 @@ sed -i -E '/^GRUB_CMDLINE_LINUX(_DEFAULT)?=/ s/ ?(boot=(casper|live)|toram|nopro
 if [ "$HARDEN" -eq 1 ]; then
     set_grub_var GRUB_CMDLINE_LINUX_DEFAULT "\"$HARDEN_OPTS\""
 fi
+# The VaeVictis boot screen (Plymouth): logo, progress bar, the disk passphrase box. Esc on it shows every message.
+grep -qE '^GRUB_CMDLINE_LINUX_DEFAULT=' "$TARGET/etc/default/grub" || set_grub_var GRUB_CMDLINE_LINUX_DEFAULT '""'
+sed -i -E '/^GRUB_CMDLINE_LINUX_DEFAULT=/ { /[" ]splash[" ]/! s/"[[:space:]]*$/ splash"/; s/=" splash"/="splash"/ }' "$TARGET/etc/default/grub"
 
 if [ "$ENC" -eq 1 ]; then
     # Without cryptsetup-initramfs the new system could not unlock its own disk: it would not start.

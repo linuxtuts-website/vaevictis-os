@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=VaeVictis
+Description=VaeVictis OS boot screen: black, the logo, a thin violet bar; the disk passphrase box
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/vaevictis
+ScriptFile=/usr/share/plymouth/themes/vaevictis/vaevictis.script
