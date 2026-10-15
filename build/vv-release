@@ -77,13 +77,13 @@ if [ -x "$HERE/vv-chroot" ] && "$HERE/vv-chroot" lang 2>/dev/null | grep -q "Fil
 fi
 
 # ---------------------------------------------------------------- release folder
-DEST="$REL/$VER"; NAME="vaevictis-$VER-amd64.iso"
+DEST="$REL/$VER"; NAME="vaevictis-gnome-$VER.iso"     # the name every release has used (vaevictis-gnome-1.0.iso, -1.0.1.iso)
 mkdir -p "$DEST"
 echo "[1/5] ISO -> $DEST/$NAME"
 ln -f "$ISO" "$DEST/$NAME" 2>/dev/null || cp --reflink=auto "$ISO" "$DEST/$NAME"
 
 echo "[2/5] checksums"
-( cd "$DEST" && sha256sum "$NAME" > SHA256SUMS )
+( cd "$DEST" && sha256sum "$NAME" > SHA256SUMS && cp SHA256SUMS "$NAME.sha256" )   # .sha256: the file earlier releases had
 if [ "$SIGN" = 1 ]; then
     command -v gpg >/dev/null || die "gpg not found"
     if [ -z "$KEY" ]; then

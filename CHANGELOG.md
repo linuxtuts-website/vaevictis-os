@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1
+## 1.1 (2026-10-16)
 
 Safer by default. Systems installed from 1.0 still need the [2026-10-12 security notice](docs/SECURITY-NOTICE-2026-10-12.md);
 what else of 1.1 they can apply (removing the HIDS, the APT repository, two kernel settings): [docs/FROM-1.0.md](docs/FROM-1.0.md).
@@ -36,6 +36,7 @@ what else of 1.1 they can apply (removing the HIDS, the APT repository, two kern
 - **APT repository trusted by default, with limits:** package `vaevictis-archive-keyring` (key for this source only, a pin that
   allows only `vaevictis-*` packages from it), index signed with an expiry date (`vv-apt-publish`), procedures in
   [docs/APT-REPOSITORY.md](docs/APT-REPOSITORY.md).
+- **Signed release:** `SHA256SUMS.asc`, signed with the key of the APT repository (`0A41 158C 1DD6 718D 3D3F  FED0 6848 6B39 B2A9 9993`).
 - **Build:** every VaeVictis file in the image now comes from a script (`vv-apps`, `vv-boot-theme`); `vv-verify-iso` compares
   them byte for byte with the repository; `vv-release --key` signs with one named key and checks it; `vv-usb` reads the stick
   back without the page cache; tests in `tests/`. Links point to vaevictisos.org.

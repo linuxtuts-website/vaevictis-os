@@ -13,12 +13,18 @@ Live USB, graphical desktop (GNOME), disk-encrypting installer. Free, open, and 
 
 ## Download and verify
 
-Get the ISO, `SHA256SUMS` and (when published) `SHA256SUMS.asc` from the download page, then:
+Get the ISO, `SHA256SUMS`, `SHA256SUMS.asc` and `vaevictis-release-key.asc` from the release, then:
 
 ```bash
-sha256sum -c SHA256SUMS                  # must print: OK
-gpg --verify SHA256SUMS.asc SHA256SUMS   # must say: Good signature (once you imported the release key)
+sha256sum -c SHA256SUMS                          # must print: OK
+gpg --show-keys vaevictis-release-key.asc        # the fingerprint must be 0A41158C1DD6718D3D3FFED068486B39B2A99993
+gpg --import vaevictis-release-key.asc
+gpg --verify SHA256SUMS.asc SHA256SUMS           # must say: Good signature from "VaeVictis OS Archive Signing Key"
 ```
+
+The release key is the same key that signs the APT repository: `0A41 158C 1DD6 718D 3D3F  FED0 6848 6B39 B2A9 9993`. Compare
+the fingerprint with the one on <https://vaevictisos.org> and in the [vaevictis-apt](https://github.com/linuxtuts-website/vaevictis-apt)
+README, three places that would all have to be changed by an attacker. (Releases before 1.1 have only the `.sha256` file.)
 
 Put it on a USB stick (4 GB or more, it will be erased). On Linux the repository has a guarded tool, `build/vv-usb`, that
 refuses system disks and shows you what it is about to erase; `dd` and balenaEtcher work too.
