@@ -7,6 +7,9 @@ Live USB, graphical desktop (GNOME), disk-encrypting installer. Free, open, and 
 
 > **Installed 1.0? Run the four commands of the [2026-10-12 security notice](docs/SECURITY-NOTICE-2026-10-12.md)**
 > (one minute, then log out and back in). Installs from the 1.0.1 or 1.1 ISO are not affected.
+>
+> **Coming from 1.0 or 1.0.1:** what of 1.1 you can apply yourself (removing the HIDS, the APT repository, two kernel
+> settings) and what needs a new installation: [docs/FROM-1.0.md](docs/FROM-1.0.md).
 
 ## Download and verify
 
@@ -87,6 +90,7 @@ The VaeVictis programs are being packaged as `.deb` files one at a time and publ
 apt ignore anything else it offered), its index is signed with the key `0A41 158C 1DD6 718D 3D3F  FED0 6848 6B39 B2A9 9993` and
 **expires** if it is not re-signed (nobody can keep serving an old one). To stop trusting it: `sudo apt purge vaevictis-archive-keyring`.
 Details, and how the key is protected and replaced: [docs/UPDATING.md](docs/UPDATING.md), [docs/APT-REPOSITORY.md](docs/APT-REPOSITORY.md).
+From 1.0 or 1.0.1 to 1.1: [docs/FROM-1.0.md](docs/FROM-1.0.md).
 
 ## What it does NOT do
 
@@ -117,7 +121,7 @@ Everything that makes the ISO is in `build/`, in plain shell and Python, readabl
 | `build/` | the `vv-*` tools, installer, programs, boot screens, desktop files: all that goes into the image (keep the files together: scripts find each other next to themselves) |
 | `packaging/` | the Debian packages (`vaevictis-aurora`, `vaevictis-archive-keyring`) |
 | `tests/` | tests that run on any Linux machine (VPN helper, kill switch, sandbox) |
-| `docs/` | build guide, updating, APT repository procedures |
+| `docs/` | build guide, updating, coming from 1.0, APT repository procedures |
 | `THREAT-MODEL.md` | what it protects against, and what it does not |
 | `SECURITY.md` | how to report a vulnerability |
 | `CHANGELOG.md` | release notes |

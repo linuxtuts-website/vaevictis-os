@@ -2,7 +2,8 @@
 
 ## 1.1
 
-Safer by default. Systems installed from 1.0 still need the [2026-10-12 security notice](docs/SECURITY-NOTICE-2026-10-12.md).
+Safer by default. Systems installed from 1.0 still need the [2026-10-12 security notice](docs/SECURITY-NOTICE-2026-10-12.md);
+what else of 1.1 they can apply (removing the HIDS, the APT repository, two kernel settings): [docs/FROM-1.0.md](docs/FROM-1.0.md).
 
 - **HIDS removed.** The file-integrity daemon was the largest piece of this project's code always running as root; the
   protections below replace it. `vv-branding` removes it from older build trees.
