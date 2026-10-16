@@ -26,7 +26,8 @@ no new features. Older releases (and the HIDS of 1.0 and 1.0.1) receive no fixes
 
 ## Code review welcome
 
-The code has not been audited by an independent third party. Reviews of the parts that run as root are especially
+The code has not been audited by an independent third party: a professional audit costs thousands of euros, which a hobby
+project with no income cannot afford. Reviews of the parts that run as root are especially
 welcome: `build/vv-vpn-helper`, `build/vaevictis_install.sh`, `build/v-snap`, `build/vv-grub-password`, `build/vv-panic-action`,
 and the sandbox `build/vv-sandbox`. Report anything security-relevant privately, as described above.
 

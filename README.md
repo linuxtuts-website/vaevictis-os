@@ -5,10 +5,15 @@ Live USB, graphical desktop (GNOME), disk-encrypting installer. Free, open, and 
 
 **Status: 1.1, maintenance mode** (see below). Download page: <https://vaevictisos.org/>
 
-> **No warranty.** VaeVictis OS is provided **as is, without warranty of any kind** (GPL-3.0, sections 15 and 16). Every
-> protection described here is designed to reduce a risk; none of them is guaranteed to work in every case: software has bugs
-> and new attacks appear. Read the [threat model](THREAT-MODEL.md), keep backups, and use it at your own risk.
-> Full text, also in Italian: [DISCLAIMER.md](DISCLAIMER.md).
+> **Read this first: a hobby project, with no guarantees**
+>
+> - **Hobby, non-profit.** One person makes VaeVictis in their free time, purely out of passion for Linux. No company and no income: everything is free.
+> - **Written by AI.** The maintainer is not a programmer. The project's own code (installer, tools, apps) is written entirely by AI assistants, directed and tested by the maintainer.
+> - **Never audited.** No independent security expert has checked the code: a professional audit costs thousands of euros, which a project with no income cannot pay. It may contain bugs and security holes that nobody has found yet.
+> - **No guarantees.** Provided as is, without warranty of any kind. Do not rely on it where your safety, your freedom or your money are at stake: use Tails or Qubes OS instead. You use VaeVictis at your own risk.
+>
+> Every protection described here is designed to reduce a risk; none is guaranteed (GPL-3.0, sections 15 and 16). Read the
+> [threat model](THREAT-MODEL.md) and keep backups. Full text, also in Italian: [DISCLAIMER.md](DISCLAIMER.md).
 
 > **Installed 1.0? Run the four commands of the [2026-10-12 security notice](docs/SECURITY-NOTICE-2026-10-12.md)**
 > (one minute, then log out and back in). Installs from the 1.0.1 or 1.1 ISO are not affected.
@@ -144,7 +149,7 @@ Everything that makes the ISO is in `build/`, in plain shell and Python, readabl
 
 ## How it is made
 
-VaeVictis is a one-person project. The maintainer is not a professional programmer: much of the code was written with the help of AI assistants under his direction: the first versions of the desktop apps (Aurora, LinPaint+) were generated with **Gemini (Google)**; the installer, the `vv-*` tools, the optimisation and the hardening of the apps were done with **Claude (Anthropic)**. Releases are tested before publication (including a complete LUKS install in a virtual machine), and the build is scripted and public; testing finds some bugs, not all. Nobody has independently audited the code yet. If you can read shell or Python, a review is very welcome (see [SECURITY.md](SECURITY.md) to report problems privately).
+VaeVictis is a one-person project. The maintainer is not a professional programmer: the code was written entirely by AI assistants, under his direction: the first versions of the desktop apps (Aurora, LinPaint+) were generated with **Gemini (Google)**; the installer, the `vv-*` tools, the optimisation and the hardening of the apps were done with **Claude (Anthropic)**. Releases are tested before publication (including a complete LUKS install in a virtual machine), and the build is scripted and public; testing finds some bugs, not all. Nobody has independently audited the code yet. If you can read shell or Python, a review is very welcome (see [SECURITY.md](SECURITY.md) to report problems privately).
 
 ## Warranty and licence
 

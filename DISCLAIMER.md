@@ -6,6 +6,17 @@ VaeVictis OS is free software, made available free of charge by one private pers
 licensed under the GNU General Public License v3.0 or later (see `LICENSE`); this page explains in plain words what that
 licence already says, and adds what you should know before you use it.
 
+**Read this first: a hobby project, with no guarantees.**
+
+- **Hobby, non-profit.** One person makes VaeVictis in their free time, purely out of passion for Linux. No company and no
+  income: everything is free.
+- **Written by AI.** The maintainer is not a programmer. The project's own code (installer, tools, apps) is written entirely
+  by AI assistants, directed and tested by the maintainer.
+- **Never audited.** No independent security expert has checked the code: a professional audit costs thousands of euros,
+  which a project with no income cannot pay. It may contain bugs and security holes that nobody has found yet.
+- **No guarantees.** Provided as is, without warranty of any kind. Do not rely on it where your safety, your freedom or your
+  money are at stake: use Tails or Qubes OS instead. You use VaeVictis at your own risk.
+
 ## No warranty
 
 VaeVictis OS is provided **"as is", without warranty of any kind**, either expressed or implied, including, but not limited
@@ -24,8 +35,8 @@ and 17). Nothing on this page limits a liability that the law does not allow to 
 - Every protection described in this repository, in the release notes and on the project's websites (vaevictisos.org,
   linuxtuts.online) is **designed to reduce a risk**. None of them is guaranteed to work in every case. Software has bugs,
   new attacks appear, and a configuration can be wrong.
-- The code has **not been audited by an independent third party**. Much of it was written with the help of AI assistants,
-  under the direction of the maintainer, who is not a professional programmer.
+- The code has **not been audited by an independent third party**, and it was written entirely by AI assistants
+  (see above).
 - Known weaknesses and limits are listed in [THREAT-MODEL.md](THREAT-MODEL.md), in the [changelog](CHANGELOG.md), in the
   security notices in [docs/](docs/) and in [docs/FROM-1.0.md](docs/FROM-1.0.md). Other, unknown weaknesses may exist.
 
@@ -67,6 +78,18 @@ commerciale. È distribuito con la licenza GNU GPL v3.0 o successiva (file `LICE
 ciò che la licenza dice già e aggiunge ciò che è bene sapere prima di usarlo. Il testo vincolante della licenza è quello
 originale inglese.
 
+**Leggi prima: un progetto amatoriale, senza garanzie.**
+
+- **Amatoriale, senza scopo di lucro.** VaeVictis è fatto da una persona nel tempo libero, per pura passione per Linux.
+  Nessuna azienda e nessun ricavo: tutto è gratuito.
+- **Scritto dall’intelligenza artificiale.** Il maintainer non è un programmatore. Il codice proprio del progetto (installer,
+  strumenti, app) è scritto interamente da assistenti di intelligenza artificiale, sotto la sua direzione e con i suoi test.
+- **Mai verificato da esperti indipendenti.** Nessun esperto di sicurezza indipendente ha controllato il codice: un audit
+  professionale costa migliaia di euro, una spesa che un progetto senza ricavi non può sostenere. Può contenere errori e
+  falle di sicurezza che nessuno ha ancora trovato.
+- **Nessuna garanzia.** Fornito così com'è, senza garanzie di alcun tipo. Non affidarti a VaeVictis dove sono in gioco la tua
+  sicurezza, la tua libertà o il tuo denaro: usa invece Tails o Qubes OS. Lo usi a tuo rischio.
+
 - **Nessuna garanzia.** VaeVictis OS è fornito **"così com'è", senza garanzie di alcun tipo**, esplicite o implicite, comprese
   quelle di commerciabilità e di idoneità a uno scopo particolare (GPL-3.0, sezione 15). Tutto il rischio sulla qualità e sul
   funzionamento del software è a carico di chi lo usa.
@@ -76,8 +99,8 @@ originale inglese.
   pacchetti, la sua documentazione o i suoi siti (GPL-3.0, sezioni 16 e 17). Restano salve le responsabilità che la legge
   non consente di escludere.
 - **Nessuna garanzia di sicurezza.** Ogni protezione descritta è **pensata per ridurre un rischio**; nessuna è garantita in
-  ogni caso. Il codice non è stato verificato da terzi indipendenti ed è stato scritto in gran parte con l'aiuto di assistenti
-  di intelligenza artificiale. I limiti e le debolezze note sono descritti in THREAT-MODEL.md, nel changelog, negli avvisi di
+  ogni caso. Il codice non è stato verificato da terzi indipendenti ed è stato scritto interamente da assistenti di
+  intelligenza artificiale. I limiti e le debolezze note sono descritti in THREAT-MODEL.md, nel changelog, negli avvisi di
   sicurezza e in docs/FROM-1.0.md; possono esisterne altre non note.
 - **Non per usi critici.** Non affidarti a VaeVictis OS se un malfunzionamento può mettere a rischio persone o causare danni
   economici o legali seri (per esempio giornalisti, attivisti o fonti esposte ad avversari capaci): usa sistemi costruiti e
