@@ -242,8 +242,8 @@ def parse_conf(text):
     for items in peers:
         if not any(k == "publickey" for k, _ in items):
             raise ConfError("a [Peer] has no PublicKey")
-    if not any(any(k == "endpoint" for k, _ in items) for items in peers):
-        raise ConfError("no [Peer] has an Endpoint (the address of the VPN server)")
+        if not any(k == "endpoint" for k, _ in items):
+            raise ConfError("a [Peer] has no Endpoint (the address of its server): VaeVictis VPN runs client configs only")
     return sections
 
 

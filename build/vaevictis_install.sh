@@ -322,7 +322,7 @@ valid_mount_point() {   # valid_mount_point PATH: empty output = good, otherwise
     case "$m" in
         /home) ;;                                                     # allowed (with the filesystem you choose)
         /boot|/boot/*|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/run|/run/*|/etc|/etc/*|/root|/root/*|/lost+found|/cdrom|/cdrom/*|\
-        /bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib32|/lib32/*|/lib64|/lib64/*|/libx32|/libx32/*|/usr|/usr/bin*|/usr/sbin*|/usr/lib*|/usr/share*|/usr/include*|/var|/var/lib|/var/lib/dpkg*|/var/lib/apt*|/var/cache/apt*)
+        /bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib32|/lib32/*|/lib64|/lib64/*|/libx32|/libx32/*|/usr|/usr/*|/var|/var/lib|/var/lib/dpkg*|/var/lib/apt*|/var/cache/apt*)
             echo "'$m' belongs to the system itself and must stay on /" ;;
     esac
 }

@@ -185,7 +185,7 @@ finish() {
 }
 
 # System folders on a partition of their own: rsync -x would leave them out, and a restore would mix old and new files
-split_system() { local d; for d in /usr /var /var/lib; do mountpoint -q "$d" && printf '%s ' "$d"; done; }
+split_system() { local d; for d in /usr /usr/local /var /var/lib; do mountpoint -q "$d" && printf '%s ' "$d"; done; }
 refuse_split() {
     local s; s=$(split_system)
     [ -z "$s" ] && return 1
@@ -242,6 +242,7 @@ snap_folder() {
     [ "$src" = "/" ] && { echo "Use option 1 for the whole system."; return; }
     case "$src/" in "$SNAP_DIR"/*|"$STORE"/*) echo "Cannot back up the snapshot directory itself."; return ;; esac
     case "$SNAP_DIR/" in "$src"/*) excl+=(--exclude="$(rsync_quote "${SNAP_DIR#"$src"}")") ;; esac
+    excl+=(--exclude=".vaevictis-snapshots/")                    # never another snapshot store (system secrets inside)
     case "$src" in
         /home|/home/*) excl+=(--exclude=".cache/" --exclude=".local/share/Trash/")
                        echo "Skipping .cache and Trash folders." ;;
