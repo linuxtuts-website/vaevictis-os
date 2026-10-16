@@ -2,7 +2,7 @@
 
 ## 1.1 (2026-10-16)
 
-Safer by default. Systems installed from 1.0 still need the [2026-10-12 security notice](docs/SECURITY-NOTICE-2026-10-12.md);
+Systems installed from 1.0 still need the [2026-10-12 security notice](docs/SECURITY-NOTICE-2026-10-12.md);
 what else of 1.1 they can apply (removing the HIDS, the APT repository, two kernel settings): [docs/FROM-1.0.md](docs/FROM-1.0.md).
 
 - **HIDS removed.** The file-integrity daemon was the largest piece of this project's code always running as root; the
@@ -23,8 +23,8 @@ what else of 1.1 they can apply (removing the HIDS, the APT repository, two kern
   network, a read-only system and home (except the data folders, their settings and the opened file's folder), hidden keys and
   browser profiles, filtered D-Bus.
 - **VPN with least privilege:** configs read with a whitelist (commands refused at import and at connect); WireGuard runs in a
-  systemd sandbox with only `CAP_NET_ADMIN` and a read-only system; the helper sets DNS itself. **Kill switch:** also blocks
-  virtual machines (forward chain), stays on during a reconnect and after a failed one; no DNS lookup while it blocks.
+  systemd sandbox with only `CAP_NET_ADMIN` and a read-only system; the helper sets DNS itself. **Kill switch:** designed to also block
+  virtual machines (forward chain) and to stay on during a reconnect and after a failed one; no DNS lookup while it blocks.
 - **v-snap:** snapshots only on encrypted disks (or the system disk of an unencrypted system), in a root-only folder pinned with
   a private bind mount; system snapshots include the kernels in `/boot`, and a restore puts back matching kernels and runs
   `update-grub`; a 1.0 snapshot is restored only if it has the modules of the installed kernels.
