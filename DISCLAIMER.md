@@ -45,8 +45,9 @@ for them, such as Tails or Qubes OS, and get expert advice.
 
 ## No support obligation
 
-This is a one-person, best-effort project. There is no obligation to provide support, updates or fixes, and no response
-time. Only the latest release is maintained; older releases (and the HIDS of 1.0 and 1.0.1) receive no fixes.
+This is a one-person, best-effort project, in **maintenance mode**: no new features, security fixes only when possible.
+There is no obligation to provide support, updates or fixes, and no response time. Only the latest release is maintained;
+older releases (and the HIDS of 1.0 and 1.0.1) receive no fixes. The project may be discontinued at any time.
 
 ## Third-party software and information
 
@@ -84,8 +85,9 @@ originale inglese.
 - **Responsabilità di chi lo usa.** Verifica il file scaricato (checksum e firma), fai un backup dei dati (l'installer cancella
   il disco o le partizioni scelte; una passphrase dimenticata non si recupera), provalo prima dalla chiavetta o in una macchina
   virtuale, tieni il sistema aggiornato. Decidi tu se è adatto alle tue esigenze e lo usi a tuo rischio.
-- **Nessun obbligo di assistenza.** Progetto di una sola persona, senza obbligo di assistenza, aggiornamenti o correzioni e
-  senza tempi di risposta. È mantenuta solo l'ultima versione.
+- **Nessun obbligo di assistenza.** Progetto di una sola persona, in **modalità manutenzione** (nessuna funzione nuova,
+  correzioni di sicurezza solo quando possibile), senza obbligo di assistenza, aggiornamenti o correzioni e senza tempi di
+  risposta. È mantenuta solo l'ultima versione. Il progetto può essere interrotto in qualsiasi momento.
 - **Software di terzi e informazioni.** I pacchetti Debian e gli altri programmi hanno le proprie licenze e nessuna garanzia da
   parte di questo progetto. Le informazioni nel repository e sui siti sono **informazioni generali**, non consulenza
   professionale di sicurezza, legale o tecnica.

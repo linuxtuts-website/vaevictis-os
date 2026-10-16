@@ -3,7 +3,7 @@
 A hardened **Debian 13 (trixie)** desktop for people who want to switch to Linux and protect their data better.
 Live USB, graphical desktop (GNOME), disk-encrypting installer. Free, open, and honest about what it does and does not do.
 
-**Status: 1.1.** Download page: <https://vaevictisos.org/>
+**Status: 1.1, maintenance mode** (see below). Download page: <https://vaevictisos.org/>
 
 > **No warranty.** VaeVictis OS is provided **as is, without warranty of any kind** (GPL-3.0, sections 15 and 16). Every
 > protection described here is designed to reduce a risk; none of them is guaranteed to work in every case: software has bugs
@@ -15,6 +15,10 @@ Live USB, graphical desktop (GNOME), disk-encrypting installer. Free, open, and 
 >
 > **Coming from 1.0 or 1.0.1:** what of 1.1 you can apply yourself (removing the HIDS, the APT repository, two kernel
 > settings) and what needs a new installation: [docs/FROM-1.0.md](docs/FROM-1.0.md).
+
+## Maintenance mode
+
+No new features are planned. Debian's security updates keep arriving through `apt` as usual; VaeVictis's own code receives security fixes only, on a best-effort basis, with no guaranteed response time. The project may be discontinued at any time; if that happens, the plan is to publish a notice with the commands to remove the VaeVictis APT repository (`sudo apt purge vaevictis-archive-keyring`), after which the system keeps receiving Debian's updates.
 
 ## Download and verify
 

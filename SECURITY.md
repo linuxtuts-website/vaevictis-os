@@ -21,7 +21,14 @@ the documented limits in [THREAT-MODEL.md](THREAT-MODEL.md).
 
 ## Supported versions
 
-Only the latest release is supported.
+Only the latest release, in **maintenance mode**: security fixes on a best-effort basis, no guaranteed response time,
+no new features. Older releases (and the HIDS of 1.0 and 1.0.1) receive no fixes. See [DISCLAIMER.md](DISCLAIMER.md).
+
+## Code review welcome
+
+The code has not been audited by an independent third party. Reviews of the parts that run as root are especially
+welcome: `build/vv-vpn-helper`, `build/vaevictis_install.sh`, `build/v-snap`, `build/vv-grub-password`, `build/vv-panic-action`,
+and the sandbox `build/vv-sandbox`. Report anything security-relevant privately, as described above.
 
 ## Verifying releases
 
