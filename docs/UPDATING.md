@@ -18,9 +18,9 @@ Today it holds **Aurora** (`vaevictis-aurora`) and the repository's own key pack
 A system installed from the 1.1 ISO has the package `vaevictis-archive-keyring`, which holds the key, the source entry and a pin:
 
 - the repository may provide **only packages named `vaevictis-*`**: anything else it offered (for example a "newer" copy of a
-  Debian package) is never installed (`/etc/apt/preferences.d/vaevictis`);
+  Debian package) is ignored by apt (`/etc/apt/preferences.d/vaevictis`);
 - its index is signed with the key `0A41 158C 1DD6 718D 3D3F  FED0 6848 6B39 B2A9 9993` and carries an **expiry date**: an old
-  index cannot be served again to hide a newer fixed package;
+  index is refused after its date, so it cannot be served for long to hide a newer fixed package;
 - `sudo apt update && sudo apt upgrade` updates these programs together with the rest of the system; they are not installed
   automatically in the background (only Debian's security updates are).
 

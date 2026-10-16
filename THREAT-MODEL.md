@@ -3,12 +3,15 @@
 VaeVictis OS is a **hardened everyday desktop**, not an anonymity or anti-forensics system. This page says what it is meant to
 protect against, what it is not, and which parts you have to trust.
 
+**Nothing here is a guarantee.** Each measure is designed to reduce a risk; a bug in VaeVictis, in Debian, in the kernel or in
+the hardware can defeat any of them. VaeVictis is provided as is, without warranty (GPL-3.0, sections 15 and 16).
+
 ## Who it is for
 
-A person leaving Windows or macOS who wants a desktop that is safe by default: no open ports, encrypted disk, automatic security
+A person leaving Windows or macOS who wants a desktop with protective defaults: no open ports, encrypted disk, automatic security
 updates, no telemetry, and a few honest tools (VPN, password manager, snapshots).
 
-## What it protects against
+## What it is meant to protect against
 
 | Threat | How |
 |---|---|
@@ -17,7 +20,7 @@ updates, no telemetry, and a few honest tools (VPN, password manager, snapshots)
 | A malicious PDF, song or image | Aurora, LinPaint+ and VaeVictis PDF run in a sandbox: no network, system and home read-only except the data folders, keys and browser profiles hidden, D-Bus filtered |
 | Someone at the keyboard changing the start options to skip the login | GRUB password: starting needs none, editing the entries or the GRUB console does |
 | Memory-corruption exploitation | `init_on_alloc`/`init_on_free`, `slab_nomerge`, `randomize_kstack_offset`, `vsyscall=none`, restricted `dmesg`, BPF, ptrace, kernel pointers |
-| Network snooping on public Wi-Fi | WireGuard VPN manager; its kill switch blocks everything outside the tunnel, also for virtual machines and during a reconnect (you must trust the VPN provider) |
+| Network snooping on public Wi-Fi | WireGuard VPN manager; its kill switch is designed to block everything outside the tunnel, also for virtual machines and during a reconnect (you must trust the VPN provider) |
 | A bug in the VPN tools turned against the system | Configs read with a whitelist (no commands); WireGuard runs in a systemd sandbox with only `CAP_NET_ADMIN` and a read-only system |
 | Known bugs in installed software | Automatic security updates from Debian; VaeVictis packages from a signed repository whose index expires, pinned to `vaevictis-*` names only |
 | Metadata leaks in documents you share | mat2 |

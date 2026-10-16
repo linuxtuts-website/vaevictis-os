@@ -1,4 +1,4 @@
-# The VaeVictis APT repository: how it is kept safe
+# The VaeVictis APT repository: how it is protected
 
 <https://apt.linuxtuts.online/> (files: [`vaevictis-apt`](https://github.com/linuxtuts-website/vaevictis-apt)) delivers the
 VaeVictis programs as Debian packages. From release 1.1 the image trusts it by default, through the package
@@ -12,7 +12,7 @@ rules below are not optional.
 | Signed index | `InRelease` / `Release.gpg` are signed by the archive key. `apt` refuses anything else. |
 | Key used only for this source | `Signed-By: /usr/share/keyrings/vaevictis-archive-keyring.gpg`: the key is valid for this repository only, never for Debian's. |
 | Pin to `vaevictis-*` | `/etc/apt/preferences.d/vaevictis`: from this site only packages named `vaevictis-*` can be installed. A "newer" copy of a Debian package offered by it gets priority -1 and is never chosen. |
-| Expiry date | The signed index carries `Valid-Until` (30 days). Nobody can keep serving an old signed index to hide a fixed package: after the date `apt` reports the repository as expired and ignores it. |
+| Expiry date | The signed index carries `Valid-Until` (30 days). An old signed index cannot be served for long to hide a fixed package: after the date `apt` reports the repository as expired and ignores it. |
 | Never replaced | `vv-apt-publish` refuses a different file under an already published name and version: a fix is always a new version. |
 | Offline release check | `vv-release` signs `SHA256SUMS` with one named key and checks it with the exported public key alone. |
 

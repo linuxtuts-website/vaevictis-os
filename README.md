@@ -1,9 +1,13 @@
 # VaeVictis OS
 
-A hardened **Debian 13 (trixie)** desktop for people who want to switch to Linux and keep their data safe.
+A hardened **Debian 13 (trixie)** desktop for people who want to switch to Linux and protect their data better.
 Live USB, graphical desktop (GNOME), disk-encrypting installer. Free, open, and honest about what it does and does not do.
 
 **Status: 1.1.** Download page: <https://vaevictisos.org/>
+
+> **No warranty.** VaeVictis OS is provided **as is, without warranty of any kind** (GPL-3.0, sections 15 and 16). Every
+> protection described here is designed to reduce a risk; none of them is guaranteed to work in every case: software has bugs
+> and new attacks appear. Read the [threat model](THREAT-MODEL.md), keep backups, and use it at your own risk.
 
 > **Installed 1.0? Run the four commands of the [2026-10-12 security notice](docs/SECURITY-NOTICE-2026-10-12.md)**
 > (one minute, then log out and back in). Installs from the 1.0.1 or 1.1 ISO are not affected.
@@ -65,12 +69,12 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
 - **The programs that open files from anywhere run in a sandbox** (`vv-sandbox`, bubblewrap, the isolation Flatpak uses): Aurora,
   LinPaint+ and VaeVictis PDF have **no network at all**, see the system and your home folder read-only (except your data folders,
   their own settings and the folder of the file you open), cannot see SSH or GPG keys, keyrings, password stores or browser profiles,
-  and reach D-Bus only through a filter. A malicious PDF, song or image that exploited a bug in MuPDF, FFmpeg, Qt or Tk would be
-  shut in there.
+  and reach D-Bus only through a filter. A malicious PDF, song or image that exploited a bug in MuPDF, FFmpeg, Qt or Tk is meant to stay
+  shut in there (a bug in the kernel or in bubblewrap itself could still let it out).
 - **VPN manager** (`vv-vpn`): WireGuard front-end with a kill switch and IPv6-aware configs. Works with any plain WireGuard
   client `.conf` (tested with ProtonVPN files); configs with commands (`PostUp`...) are refused. Privileged steps ask for your
-  password; WireGuard itself runs in a systemd sandbox that can only configure the network. With the **kill switch** on, nothing
-  leaves the PC or its virtual machines outside the tunnel, also while it reconnects or if reconnecting fails.
+  password; WireGuard itself runs in a systemd sandbox that can only configure the network. With the **kill switch** on, the firewall is set to
+  block the traffic of the PC and of its virtual machines outside the tunnel, also while it reconnects or if reconnecting fails.
 - **Tools:** KeePassXC (offline password manager), mat2 (metadata cleaner), Panic Mode (cut the network and power off), Lynis,
   uBlock Origin preinstalled in Firefox ESR, an optional NVIDIA proprietary driver installer (`vv-nvidia`).
 - **Virtual machines, built in:** QEMU/KVM, libvirt, `virt-manager`, and `virt-install` are preinstalled, so you can
@@ -94,7 +98,7 @@ The VaeVictis programs are being packaged as `.deb` files one at a time and publ
 <https://apt.linuxtuts.online/>, so that `apt upgrade` updates them too. From 1.1 it is **already configured** (package
 `vaevictis-archive-keyring`), with three limits: the repository may provide **only packages named `vaevictis-*`** (a pin makes
 apt ignore anything else it offered), its index is signed with the key `0A41 158C 1DD6 718D 3D3F  FED0 6848 6B39 B2A9 9993` and
-**expires** if it is not re-signed (nobody can keep serving an old one). To stop trusting it: `sudo apt purge vaevictis-archive-keyring`.
+**expires** if it is not re-signed (apt refuses an old index after its date). To stop trusting it: `sudo apt purge vaevictis-archive-keyring`.
 Details, and how the key is protected and replaced: [docs/UPDATING.md](docs/UPDATING.md), [docs/APT-REPOSITORY.md](docs/APT-REPOSITORY.md).
 From 1.0 or 1.0.1 to 1.1: [docs/FROM-1.0.md](docs/FROM-1.0.md).
 
@@ -102,7 +106,7 @@ From 1.0 or 1.0.1 to 1.1: [docs/FROM-1.0.md](docs/FROM-1.0.md).
 
 - It is **not an anonymity system** like Tails: no Tor, your provider sees your traffic unless you use a VPN you trust.
 - **No Secure Boot** support yet; **`/boot` is not encrypted**, so someone who can start the computer from another disk can tamper
-  with it (the GRUB password stops changes at the boot menu, not that). A firmware password and no booting from USB close it.
+  with it (the GRUB password stops changes at the boot menu, not that). A firmware password and no booting from USB make it harder.
 - Panic Mode is **not a secure erase**: it cuts the network and powers off; RAM is not wiped.
 - The sandbox covers Aurora, LinPaint+ and VaeVictis PDF only: Firefox has its own, LibreOffice and other programs have none.
   Inside it, a malicious file can still change files in your data folders.
@@ -134,11 +138,13 @@ Everything that makes the ISO is in `build/`, in plain shell and Python, readabl
 
 ## How it is made
 
-VaeVictis is a one-person project. The maintainer is not a professional programmer: much of the code was written with the help of AI assistants under his direction: the first versions of the desktop apps (Aurora, LinPaint+) were generated with **Gemini (Google)**; the installer, the `vv-*` tools, the optimisation and the hardening of the apps were done with **Claude (Anthropic)**. Every release is tested on virtual and real machines (including complete LUKS installs), and the build is scripted and public. Nobody has independently audited the code yet. If you can read shell or Python, a review is very welcome (see [SECURITY.md](SECURITY.md) to report problems privately).
+VaeVictis is a one-person project. The maintainer is not a professional programmer: much of the code was written with the help of AI assistants under his direction: the first versions of the desktop apps (Aurora, LinPaint+) were generated with **Gemini (Google)**; the installer, the `vv-*` tools, the optimisation and the hardening of the apps were done with **Claude (Anthropic)**. Releases are tested before publication (including a complete LUKS install in a virtual machine), and the build is scripted and public; testing finds some bugs, not all. Nobody has independently audited the code yet. If you can read shell or Python, a review is very welcome (see [SECURITY.md](SECURITY.md) to report problems privately).
 
 ## Warranty and licence
 
-Provided **as is, without warranty**. Try it in a virtual machine or from the USB stick first. **The installer erases the disk or
+Provided **as is, without warranty of any kind**, express or implied, as the GPL-3.0 states (sections 15 and 16): the author is not
+liable for damage, data loss or any security incident arising from its use. No protection described in this repository or on the
+project's websites is guaranteed. Try it in a virtual machine or from the USB stick first. **The installer erases the disk or
 partitions you select: back up your data first.**
 
 The VaeVictis scripts and programs in this repository are released under the **GNU General Public License v3.0 or later** (see `LICENSE`).
