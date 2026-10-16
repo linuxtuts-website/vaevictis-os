@@ -8,6 +8,7 @@ Live USB, graphical desktop (GNOME), disk-encrypting installer. Free, open, and 
 > **No warranty.** VaeVictis OS is provided **as is, without warranty of any kind** (GPL-3.0, sections 15 and 16). Every
 > protection described here is designed to reduce a risk; none of them is guaranteed to work in every case: software has bugs
 > and new attacks appear. Read the [threat model](THREAT-MODEL.md), keep backups, and use it at your own risk.
+> Full text, also in Italian: [DISCLAIMER.md](DISCLAIMER.md).
 
 > **Installed 1.0? Run the four commands of the [2026-10-12 security notice](docs/SECURITY-NOTICE-2026-10-12.md)**
 > (one minute, then log out and back in). Installs from the 1.0.1 or 1.1 ISO are not affected.
@@ -132,7 +133,8 @@ Everything that makes the ISO is in `build/`, in plain shell and Python, readabl
 | `packaging/` | the Debian packages (`vaevictis-aurora`, `vaevictis-archive-keyring`) |
 | `tests/` | tests that run on any Linux machine (VPN helper, kill switch, sandbox) |
 | `docs/` | build guide, updating, coming from 1.0, APT repository procedures |
-| `THREAT-MODEL.md` | what it protects against, and what it does not |
+| `DISCLAIMER.md` | no warranty, limitation of liability, not for critical use (English and Italian) |
+| `THREAT-MODEL.md` | what it is meant to protect against, and what it does not |
 | `SECURITY.md` | how to report a vulnerability |
 | `CHANGELOG.md` | release notes |
 
@@ -144,7 +146,7 @@ VaeVictis is a one-person project. The maintainer is not a professional programm
 
 Provided **as is, without warranty of any kind**, express or implied, as the GPL-3.0 states (sections 15 and 16): the author is not
 liable for damage, data loss or any security incident arising from its use. No protection described in this repository or on the
-project's websites is guaranteed. Try it in a virtual machine or from the USB stick first. **The installer erases the disk or
+project's websites is guaranteed: see [DISCLAIMER.md](DISCLAIMER.md). Try it in a virtual machine or from the USB stick first. **The installer erases the disk or
 partitions you select: back up your data first.**
 
 The VaeVictis scripts and programs in this repository are released under the **GNU General Public License v3.0 or later** (see `LICENSE`).

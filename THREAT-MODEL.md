@@ -4,7 +4,7 @@ VaeVictis OS is a **hardened everyday desktop**, not an anonymity or anti-forens
 protect against, what it is not, and which parts you have to trust.
 
 **Nothing here is a guarantee.** Each measure is designed to reduce a risk; a bug in VaeVictis, in Debian, in the kernel or in
-the hardware can defeat any of them. VaeVictis is provided as is, without warranty (GPL-3.0, sections 15 and 16).
+the hardware can defeat any of them. VaeVictis is provided as is, without warranty (GPL-3.0, sections 15 and 16): see [DISCLAIMER.md](DISCLAIMER.md).
 
 ## Who it is for
 
