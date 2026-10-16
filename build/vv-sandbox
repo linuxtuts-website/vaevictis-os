@@ -75,16 +75,21 @@ case "$profile" in
     linpaint) own="$HOME/.config/linpaint" ;;
 esac
 mkdir -p "$(dirname "$own")" && { [ -d "$own" ] || mkdir -m 0700 "$own"; } && rw "$own"
-# ... and the folder of each file it was asked to open, if it is a normal folder of the home; otherwise the file alone
-# (never a hidden folder, never the home itself, never a shared folder such as /tmp, full of other programs' sockets)
+# ... and each file it was asked to open. Only regular files, checked AFTER following links: never a folder, a socket
+# or a device. A file in a normal folder of the home: that folder becomes writable (to save next to it). A hidden file,
+# or a file inside a hidden folder (.bashrc, .profile, .config/autostart ...): read only, wherever it is. Never the home
+# itself, never a shared folder such as /tmp or /run (full of other programs' sockets): there, the file alone.
 for f in "$@"; do
-    [ -e "$f" ] || continue
-    f=$(realpath -e -- "$f") || continue
+    f=$(realpath -e -- "$f" 2>/dev/null) || continue
+    [ -f "$f" ] || continue
     dir=$(dirname "$f")
-    case "$dir/" in
-        "$HOME"/.*|*/.*/*)            args+=(--ro-bind "$f" "$f") ;;    # inside a hidden folder: read only
-        "$HOME"/*/*)                  rw "$dir" ;;
+    case "$f" in
+        */.*)                         args+=(--ro-bind "$f" "$f") ;;    # hidden, or inside a hidden folder: read only
+        "$HOME"/*/*)                  rw "$dir" ;;                       # a normal folder of the home
+        "$HOME"/*)                    rw "$f" ;;                         # a normal file directly in the home: that file
         /media/*|/run/media/*|/mnt/*) ;;                                 # already writable
+        /run/*|/proc/*|/sys/*|/dev/*|/tmp/*|/var/tmp/*)
+                                      args+=(--ro-bind "$f" "$f") ;;    # shared system places: read only
         *)                            if [ -w "$f" ]; then rw "$f"; else args+=(--ro-bind "$f" "$f"); fi ;;
     esac
 done
@@ -96,8 +101,10 @@ for s in .ssh .gnupg .local/share/keyrings .password-store .mozilla .thunderbird
          .config/evolution .config/libvirt .local/share/libvirt .bash_history .netrc .git-credentials \
          .config/git/credentials .Xauthority .ICEauthority; do
     p="$HOME/$s"
-    if [ -d "$p" ] && [ ! -L "$p" ]; then args+=(--tmpfs "$p")
-    elif [ -f "$p" ] && [ ! -L "$p" ]; then args+=(--ro-bind /dev/null "$p"); fi
+    [ -e "$p" ] || continue
+    t=$(realpath -e -- "$p" 2>/dev/null) || continue        # a secret moved elsewhere behind a link: hide the real place
+    if [ -d "$t" ]; then args+=(--tmpfs "$t")
+    elif [ -f "$t" ]; then args+=(--ro-bind /dev/null "$t"); fi
 done
 
 # The screen. Wayland when the session has it: a Wayland program sees nothing of the other windows.

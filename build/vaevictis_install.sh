@@ -322,7 +322,7 @@ valid_mount_point() {   # valid_mount_point PATH: empty output = good, otherwise
     case "$m" in
         /home) ;;                                                     # allowed (with the filesystem you choose)
         /boot|/boot/*|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/run|/run/*|/etc|/etc/*|/root|/root/*|/lost+found|/cdrom|/cdrom/*|\
-        /bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib32|/lib32/*|/lib64|/lib64/*|/libx32|/libx32/*|/usr|/usr/bin*|/usr/sbin*|/usr/lib*|/usr/share*|/usr/include*|/var/lib/dpkg*)
+        /bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib32|/lib32/*|/lib64|/lib64/*|/libx32|/libx32/*|/usr|/usr/bin*|/usr/sbin*|/usr/lib*|/usr/share*|/usr/include*|/var|/var/lib|/var/lib/dpkg*|/var/lib/apt*|/var/cache/apt*)
             echo "'$m' belongs to the system itself and must stay on /" ;;
     esac
 }
@@ -331,7 +331,7 @@ valid_mount_point() {   # valid_mount_point PATH: empty output = good, otherwise
 while [ "$REST_TAKEN" -eq 0 ]; do
     [ "$(free_mib)" -ge 1280 ] || break                              # less than about 1 GiB left: nothing useful fits
     show_free
-    read -rp "Add another custom partition (e.g., /var, /data)? [y/N]: " ADD_EXTRA
+    read -rp "Add another custom partition (e.g., /data, /srv)? [y/N]: " ADD_EXTRA
     case "${ADD_EXTRA,,}" in y|yes) ;; *) break ;; esac
 
     read -rp "Mount point (e.g., /data): " MNT_PT
@@ -702,6 +702,8 @@ scrub_live_artifacts() {
         chroot "$TARGET" userdel -r "$u" 2>/dev/null || warn "could not remove the live user '$u': remove it manually after first boot."
         rm -f "$TARGET/var/lib/AccountsService/users/$u"
     done
+    left=$(awk -F: '$3>=1000 && $3<60000 {printf "%s ", $1}' "$TARGET/etc/passwd")
+    [ -z "$left" ] || die "the live account(s) ${left% } are still in the installed system: refusing to finish (public password, sudo rights)."
     # Sudo rights written for the live user (live, live-user, ...). A new user with the same name must not inherit them.
     rm -f "$TARGET"/etc/sudoers.d/live*
     for u in "${gone[@]}"; do

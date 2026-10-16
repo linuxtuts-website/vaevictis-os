@@ -2,6 +2,7 @@
 # vv-panic-action - the privileged half of Panic Mode. It is started only through sudo by /usr/local/bin/vv-panic.
 # Cuts the network, flushes the disks and powers off at once. It is NOT a secure erase of RAM.
 [ "$(id -u)" -eq 0 ] || { echo "vv-panic-action: must run as root" >&2; exit 1; }
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
 
 # VV_PANIC_DRYRUN only matters when the program is started directly as root (sudo's env_reset removes it),
 # so a normal user cannot use it to switch the panic button off.

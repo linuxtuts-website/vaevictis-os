@@ -15,6 +15,9 @@ from gi.repository import Gtk, GLib
 
 CONF_DIR = "/etc/wireguard"
 INDEX = "/var/lib/vv-vpn/nodes"                  # names only, readable by everyone
+# ip, pkexec and curl only from the system folders, whatever PATH the session has
+os.environ["PATH"] = "/usr/sbin:/usr/bin:/sbin:/bin"
+
 HELPER = "/usr/local/libexec/vv-vpn-helper"
 NAME_RE = re.compile(r"[A-Za-z0-9_=+.-]{1,15}")    # valid wg-quick interface names (used with fullmatch)
 POLL_SECONDS = 2

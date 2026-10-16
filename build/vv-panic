@@ -14,7 +14,7 @@ gi.require_version("Gdk", "3.0")      # without this Python loads Gdk 4.0 and th
 from gi.repository import Gdk, GLib, Gtk
 
 HELPER = "/usr/local/libexec/vv-panic-action"
-SUDO_CMD = ["sudo", "-n"]
+SUDO_CMD = ["/usr/bin/sudo", "-n"]
 
 CSS = b"""
 window.vvp { background-color: #0a0a0a; border: 2px solid #b71c1c; border-radius: 12px; }

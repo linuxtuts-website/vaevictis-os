@@ -151,7 +151,7 @@ setup_storage() {
     SYS_EXCLUDES=(--exclude="/dev/*" --exclude="/proc/*" --exclude="/sys/*" --exclude="/tmp/*"
                   --exclude="/run/*" --exclude="/mnt/*" --exclude="/media/*" --exclude="/lost+found"
                   --exclude="/boot/*" --exclude="/home/*" --exclude="/swapfile"
-                  --exclude="$(rsync_quote "$SNAP_DIR")")
+                  --exclude="$(rsync_quote "$SNAP_DIR")" --exclude=".vaevictis-snapshots/")   # any other store too
     echo "Snapshots will be kept in: $SNAP_DIR ($WHERE)"
 }
 
@@ -184,7 +184,18 @@ finish() {
     fi
 }
 
+# System folders on a partition of their own: rsync -x would leave them out, and a restore would mix old and new files
+split_system() { local d; for d in /usr /var /var/lib; do mountpoint -q "$d" && printf '%s ' "$d"; done; }
+refuse_split() {
+    local s; s=$(split_system)
+    [ -z "$s" ] && return 1
+    echo "Refused: ${s% } is on a partition of its own, so a system snapshot would leave it out and a restore would"
+    echo "mix old and new files (for example the package database). v-snap supports only / with /boot."
+    return 0
+}
+
 snap_system() {
+    refuse_split && return
     clean_partials
     local latest need rc link=() blink=()
     latest=$(sys_snaps | tail -n 1)
@@ -287,6 +298,7 @@ delete_snap() {
 
 restore_snap() {
     local SYS=() s i=0 n src c k kver missing="" have_boot=0 rc
+    refuse_split && return
     while IFS= read -r s; do SYS+=("$s"); done < <(sys_snaps)
     [ ${#SYS[@]} -gt 0 ] || { echo "No system snapshots found."; return; }
     echo -e "\nSystem snapshots:"

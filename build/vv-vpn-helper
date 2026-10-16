@@ -85,7 +85,7 @@ KEY_RE = re.compile(r"[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=")
 HOST_RE = re.compile(r"(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
                      r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?")
 ALLOWED = {
-    "interface": ("privatekey", "address", "dns", "mtu", "listenport", "table", "fwmark"),
+    "interface": ("privatekey", "address", "dns", "mtu", "listenport", "table"),
     "peer": ("publickey", "presharedkey", "allowedips", "endpoint", "persistentkeepalive"),
 }
 CANON = {"privatekey": "PrivateKey", "address": "Address", "dns": "DNS", "mtu": "MTU", "listenport": "ListenPort",
@@ -188,11 +188,11 @@ def check_value(key, value):
             if value.lower() != "off":
                 _int_in(value, 0, 65535, key)
         elif key == "table":
-            if not re.fullmatch(r"(?i:off|auto)|\d{1,10}|[A-Za-z][A-Za-z0-9_-]{0,31}", value):
-                raise ConfError(f"invalid Table '{value}'")
-        elif key == "fwmark":
-            if not re.fullmatch(r"(?i:off)|\d{1,10}|0x[0-9A-Fa-f]{1,8}", value):
-                raise ConfError(f"invalid FwMark '{value}'")
+            # only the default: with "off" or another table wg-quick adds no route, and the traffic would keep
+            # leaving outside the tunnel while the tunnel shows as connected
+            if value.lower() != "auto":
+                raise ConfError(f"Table = {value} is not supported (custom routing: the traffic might not go through "
+                                "the tunnel)")
     except ValueError:
         raise ConfError(f"invalid {CANON[key]} '{value}'")
 
@@ -221,6 +221,8 @@ def parse_conf(text):
             raise ConfError("the config contains PreUp/PostUp/PreDown/PostDown commands, which would run as root")
         if key == "saveconfig":
             raise ConfError("SaveConfig is not supported (it would rewrite the config)")
+        if key == "fwmark":
+            raise ConfError("FwMark is not supported (custom routing: the traffic might not go through the tunnel)")
         if not sections:
             raise ConfError(f"line {n}: a setting before [Interface]")
         sec = sections[-1][0]
@@ -240,6 +242,8 @@ def parse_conf(text):
     for items in peers:
         if not any(k == "publickey" for k, _ in items):
             raise ConfError("a [Peer] has no PublicKey")
+    if not any(any(k == "endpoint" for k, _ in items) for items in peers):
+        raise ConfError("no [Peer] has an Endpoint (the address of the VPN server)")
     return sections
 
 
@@ -448,10 +452,18 @@ def ks_install(iface, endpoints):
         print("nftables refused the kill switch rules:\n" + r.stderr.strip(), file=sys.stderr)
         return False
     os.makedirs(RUN_DIR, mode=0o755, exist_ok=True)
-    with open(KS_FLAG, "w") as fh:
-        fh.write(iface + "\n")
-    os.chmod(KS_FLAG, 0o644)
+    write_private(KS_FLAG, iface + "\n")             # root only; the window just checks that it exists
+    os.chmod(KS_FLAG, 0o600)                          # also when an older version made it readable by all
     return True
+
+
+def ks_iface():
+    """The tunnel the kill switch is guarding, or None when it is off."""
+    try:
+        with open(KS_FLAG) as fh:
+            return fh.read().strip() or None
+    except OSError:
+        return None
 
 
 def ks_off():
@@ -530,7 +542,8 @@ def cmd_down(name):
         write_private(conf, "[Interface]\n")
     rc = sandboxed_wg_quick("down", conf)
     unset_dns(name)
-    ks_off()                                          # the user chose to disconnect: back to the normal network
+    if ks_iface() in (None, name):                    # the user chose to disconnect: back to the normal network
+        ks_off()                                      # (never the kill switch of another tunnel)
     for path in (conf, os.path.join(EP_DIR, name + ".json")):
         try:
             os.remove(path)
