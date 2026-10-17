@@ -27,9 +27,15 @@ from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 
 from PIL import Image, ImageColor, ImageDraw, ImageEnhance, ImageFont, ImageOps, ImageTk
 
+# wl-copy, xclip and the screenshot helpers only from the system folders, whatever PATH the session has
+os.environ["PATH"] = "/usr/sbin:/usr/bin:/sbin:/bin"
+
 APP_NAME = "LinPaint+"
 APP_VERSION = "2.3"
 MAX_UNDO = 30
+MAX_SIDE = 8000                       # the largest image LinPaint+ creates, opens or pastes (pixels per side)
+MAX_VIEW_PIXELS = 36_000_000          # the zoomed view is never larger than this
+UNDO_BYTES = 400 * 1024 * 1024        # undo steps kept within this memory
 SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".config", "linpaint", "settings.json")
 
 # === DARK THEME ===
@@ -268,6 +274,8 @@ for interactive in (False, True):
     if code == 0 and "uri" in res:
         print(unquote(urlparse(res["uri"]).path))
         sys.exit(0)
+    if code == 1:            # the user cancelled: do not ask again
+        break
 sys.exit("cancelled")
 """
 
@@ -790,8 +798,11 @@ class LinPaint:
         if self.zoom_level == 1.0:
             view = self.img
         else:
-            w = max(1, int(self.img.width * self.zoom_level))
-            h = max(1, int(self.img.height * self.zoom_level))
+            z = self.zoom_level
+            if self.img.width * self.img.height * z * z > MAX_VIEW_PIXELS:     # a big image at a big zoom
+                z = (MAX_VIEW_PIXELS / (self.img.width * self.img.height)) ** 0.5
+            w = max(1, int(self.img.width * z))
+            h = max(1, int(self.img.height * z))
             resample = Image.Resampling.NEAREST if self.zoom_level > 1 else Image.Resampling.LANCZOS
             view = self.img.resize((w, h), resample)
         self.photo = ImageTk.PhotoImage(view)
@@ -820,7 +831,10 @@ class LinPaint:
     # ========================================================== UNDO/REDO
     def push_undo(self):
         self.undo_stack.append(self.img.copy())
-        if len(self.undo_stack) > MAX_UNDO:
+        # at most MAX_UNDO steps, and within UNDO_BYTES (a big image has fewer steps)
+        while len(self.undo_stack) > 1 and (
+                len(self.undo_stack) > MAX_UNDO
+                or sum(i.width * i.height * len(i.getbands()) for i in self.undo_stack) > UNDO_BYTES):
             self.undo_stack.pop(0)
         self.redo_stack.clear()
         self.modified = True
@@ -1133,6 +1147,10 @@ class LinPaint:
         if img is None:
             self.status.config(text="Nothing to paste: the clipboard has no image")
             return
+        if img.width > MAX_SIDE or img.height > MAX_SIDE:
+            messagebox.showwarning(APP_NAME, f"The image is too large ({img.width} x {img.height}); "
+                                             f"LinPaint+ handles up to {MAX_SIDE} x {MAX_SIDE} pixels.")
+            return
         self.push_undo()
         self.img = img.convert("RGB")
         self.refresh()
@@ -1335,7 +1353,11 @@ class LinPaint:
 
     def load_file(self, path):
         try:
-            self.img = Image.open(path).convert("RGB")
+            with Image.open(path) as probe:          # the size is in the header: check it before decoding the pixels
+                if probe.width > MAX_SIDE or probe.height > MAX_SIDE:
+                    raise ValueError(f"the image is too large ({probe.width} x {probe.height}); "
+                                     f"LinPaint+ handles up to {MAX_SIDE} x {MAX_SIDE} pixels")
+                self.img = probe.convert("RGB")
         except Exception as e:
             messagebox.showerror(APP_NAME, f"Cannot open file:\n{e}")
             return
@@ -1388,14 +1410,28 @@ class LinPaint:
             self.write_file(path)
 
     def write_file(self, path):
+        # through a temporary file in the same folder, then put in place: a link at that name is replaced,
+        # never followed (so it cannot redirect the save to another file)
+        tmp = None
         try:
-            if path.lower().endswith((".jpg", ".jpeg")):
-                self.img.save(path, quality=95)
+            ext = os.path.splitext(path)[1] or ".png"
+            fd, tmp = tempfile.mkstemp(suffix=ext, prefix=".linpaint_", dir=os.path.dirname(os.path.abspath(path)))
+            os.close(fd)
+            fmt = Image.registered_extensions().get(ext.lower(), "PNG")
+            if fmt == "JPEG":
+                self.img.save(tmp, format=fmt, quality=95)
             else:
-                self.img.save(path)
+                self.img.save(tmp, format=fmt)
+            if os.path.isfile(path) and not os.path.islink(path):
+                shutil.copymode(path, tmp)
+            os.replace(tmp, path)
+            tmp = None
         except Exception as e:
             messagebox.showerror(APP_NAME, f"Cannot save:\n{e}")
             return False
+        finally:
+            if tmp and os.path.exists(tmp):
+                os.remove(tmp)
         self.filename = path
         self.modified = False
         self.update_title()

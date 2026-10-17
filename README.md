@@ -5,8 +5,8 @@ Live USB, graphical desktop (GNOME), disk-encrypting installer. Free, open, and 
 
 **Status: 1.1, maintenance mode** (see below). Download page: <https://vaevictisos.org/>
 
-**Installed 1.1?** Run `sudo apt update && sudo apt full-upgrade`: it brings the package `vaevictis-tools` 1.2.0 with the
-fixes of October 2026 (see the [changelog](CHANGELOG.md) and [docs/UPDATING.md](docs/UPDATING.md)).
+**Installed 1.1?** Run `sudo apt update && sudo apt full-upgrade`: it brings the package `vaevictis-tools` 1.3.0 and Aurora
+1.1.3 with the fixes of October 2026 (see the [changelog](CHANGELOG.md) and [docs/UPDATING.md](docs/UPDATING.md)).
 
 > **Read this first: a hobby project, with no guarantees**
 >

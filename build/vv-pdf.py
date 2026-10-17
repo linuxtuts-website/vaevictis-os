@@ -468,6 +468,7 @@ class VaeVictisPDF(QMainWindow):
         self.splitter.setSizes([170, 900])
 
         self.lbl_info = QLabel("")
+        self.lbl_info.setTextFormat(Qt.TextFormat.PlainText)      # the file name is shown as text, never as markup
         self.statusBar().addPermanentWidget(self.lbl_info)
         self.statusBar().showMessage("Drop a PDF on the window or press Ctrl+O", 6000)
 
@@ -578,6 +579,9 @@ class VaeVictisPDF(QMainWindow):
         self._build_thumbs()
         self._update_ui()
         self.render_page(scroll="top")
+        if doc.is_encrypted and pw is None:          # an owner password only: anyone can open it, restrictions apply
+            self.statusBar().showMessage("Note: this PDF has permission restrictions (owner password). Saving keeps the "
+                                         "pages, not those restrictions.", 10000)
         return True
 
     def closeEvent(self, event):
@@ -603,8 +607,9 @@ class VaeVictisPDF(QMainWindow):
     def _effective_zoom(self, page):
         r = page.rect
         vp = self.scroll.viewport()
-        if self.fit == "width": z = (vp.width() - 2 * PAD) / (r.width * BASE_SCALE)
-        elif self.fit == "page": z = min((vp.width() - 2 * PAD) / (r.width * BASE_SCALE), (vp.height() - 2 * PAD) / (r.height * BASE_SCALE))
+        w, h = max(1.0, r.width), max(1.0, r.height)       # a crafted page can be 0 wide or high
+        if self.fit == "width": z = (vp.width() - 2 * PAD) / (w * BASE_SCALE)
+        elif self.fit == "page": z = min((vp.width() - 2 * PAD) / (w * BASE_SCALE), (vp.height() - 2 * PAD) / (h * BASE_SCALE))
         else: z = self.zoom
         return max(0.1, min(8.0, z))
 
@@ -712,7 +717,7 @@ class VaeVictisPDF(QMainWindow):
     def _thumb_icon(self, i):
         page = self.doc[i]
         r = page.rect
-        s = min(THUMB_W / r.width, THUMB_H / r.height) * self.devicePixelRatioF()
+        s = min(THUMB_W / max(1.0, r.width), THUMB_H / max(1.0, r.height)) * self.devicePixelRatioF()
         img = pix_to_qimage(page.get_pixmap(matrix=fitz.Matrix(s, s), alpha=False))
         if self.invert: img.invertPixels()
         pm = QPixmap.fromImage(img)
@@ -843,8 +848,14 @@ class VaeVictisPDF(QMainWindow):
         first = pos
         added = 0
         for name in names:
-            d2, _ = self._authenticated_doc(name)
+            d2, pw2 = self._authenticated_doc(name)
             if d2 is None: continue
+            if pw2 is not None and self.password is None:
+                # pages of a protected PDF must not end up in an unprotected file without the user knowing
+                r = QMessageBox.question(self, "Protected pages",
+                    f"{os.path.basename(name)} is protected by a password.\n\nProtect the whole document with the same "
+                    "password when you save it? (No: it will be saved WITHOUT protection.)")
+                if r == QMessageBox.StandardButton.Yes: self.password = pw2
             try:
                 self.doc.insert_pdf(d2, start_at=pos)
                 pos += len(d2)
@@ -867,10 +878,14 @@ class VaeVictisPDF(QMainWindow):
         name, _ = QFileDialog.getSaveFileName(self, "Save extracted pages", default, "PDF Files (*.pdf)")
         if not name: return
         name = name if name.lower().endswith(".pdf") else name + ".pdf"
+        if self.path and os.path.realpath(name) == os.path.realpath(self.path):
+            _box(self, QMessageBox.Icon.Warning, "Choose another name",
+                 "That is the document you have open. Choose another file name for the extracted pages.")
+            return
         try:
             new = fitz.open()
             for a, b in ranges(pages): new.insert_pdf(self.doc, from_page=a, to_page=b)
-            new.save(name, **self._save_opts())
+            self._save_new(name, lambda tmp: new.save(tmp, **self._save_opts()))
             new.close()
         except Exception as e: _box(self, QMessageBox.Icon.Warning, "Extract failed", str(e)); return
         self.last_dir = os.path.dirname(name)
@@ -884,7 +899,7 @@ class VaeVictisPDF(QMainWindow):
         n = len(self.doc)
         width = len(str(n))
         targets = [os.path.join(folder, f"{stem}_{i + 1:0{width}d}.pdf") for i in range(n)]
-        if any(os.path.exists(t) for t in targets):
+        if any(os.path.lexists(t) for t in targets):     # lexists: also a link that points nowhere yet
             if QMessageBox.question(self, "Overwrite?", "Some files already exist in that folder. Overwrite them?") != QMessageBox.StandardButton.Yes: return
         dlg = QProgressDialog("Splitting...", "Cancel", 0, n, self)
         dlg.setWindowModality(Qt.WindowModality.WindowModal)
@@ -896,7 +911,7 @@ class VaeVictisPDF(QMainWindow):
                 if dlg.wasCanceled(): break
                 new = fitz.open()
                 new.insert_pdf(self.doc, from_page=i, to_page=i)
-                new.save(t, **self._save_opts())
+                self._save_new(t, lambda tmp: new.save(tmp, **self._save_opts()))
                 new.close()
                 done += 1
         except Exception as e: _box(self, QMessageBox.Icon.Warning, "Split failed", str(e))
@@ -925,10 +940,13 @@ class VaeVictisPDF(QMainWindow):
         if not name: return
         name = name if name.lower().endswith(".png") else name + ".png"
         page = self.doc[self.current]
-        dpi = 200
-        px = (page.rect.width / 72 * dpi) * (page.rect.height / 72 * dpi)
-        if px > MAX_PIXELS: dpi = max(1, int(dpi * (MAX_PIXELS / px) ** 0.5))     # a huge page must not fill the memory
-        try: page.get_pixmap(dpi=dpi, alpha=False).save(name)
+        r = page.rect
+        scale = 200 / 72
+        px = (max(1.0, r.width) * scale) * (max(1.0, r.height) * scale)
+        if px > MAX_PIXELS: scale *= (MAX_PIXELS / px) ** 0.5      # a huge page must not fill the memory
+        try:
+            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+            self._save_new(name, lambda tmp: pix.save(tmp, output="png"))
         except Exception as e: _box(self, QMessageBox.Icon.Warning, "Export failed", str(e)); return
         self.statusBar().showMessage(f"Exported {os.path.basename(name)}", 4000)
 
@@ -943,6 +961,17 @@ class VaeVictisPDF(QMainWindow):
         name, _ = QFileDialog.getSaveFileName(self, "Save PDF", default, "PDF Files (*.pdf)")
         if not name: return False
         return self._write(name if name.lower().endswith(".pdf") else name + ".pdf")
+
+    def _save_new(self, path, write):
+        """Write a new file through a temporary file in the same folder, then put it in place: a link at that name is
+        replaced, never followed (so it cannot redirect the write to another file)."""
+        fd, tmp = tempfile.mkstemp(suffix=".tmp", prefix=".vvpdf_", dir=os.path.dirname(os.path.abspath(path)))
+        os.close(fd)
+        try:
+            write(tmp)
+            os.replace(tmp, path)
+        finally:
+            if os.path.exists(tmp): os.remove(tmp)
 
     def _write(self, path):
         tmp = None

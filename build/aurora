@@ -19,6 +19,10 @@ import subprocess
 from pathlib import Path
 from datetime import timedelta
 
+# ffprobe and notify-send only from the system folders, whatever PATH the session has
+os.environ["PATH"] = "/usr/sbin:/usr/bin:/sbin:/bin"
+MAX_DURATION = 10 * 365 * 24 * 3600     # a longer "duration" read from a file is not a real one
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem, QSlider,
@@ -519,7 +523,7 @@ class Aurora(QMainWindow):
                 self.activateWindow()
                 if isinstance(sender, str) and is_reply_path(sender):
                     self.lock_socket.sendto(b'OK', sender)
-            elif os.path.exists(msg):
+            elif os.path.isfile(msg):
                 self.open_external_file(msg)
         except Exception:
             pass
@@ -914,7 +918,13 @@ class Aurora(QMainWindow):
                 
         except Exception:
             title, artist, duration = Path(path).stem, 'Unknown', 0
-        
+        # a crafted file can declare any duration (huge, infinite, not a number): keep only a sensible one
+        try:
+            duration = float(duration)
+        except (TypeError, ValueError):
+            duration = 0
+        if not math.isfinite(duration) or not 0 <= duration <= MAX_DURATION:
+            duration = 0
         return {'title': title, 'artist': artist, 'duration': duration}
 
     def _import_and_link(self, paths):
@@ -971,7 +981,11 @@ class Aurora(QMainWindow):
         self.visualizer.set_available(ok)
 
     def fmt_time(self, s):
-        if not s or s <= 0:
+        try:
+            s = float(s)
+        except (TypeError, ValueError):
+            return "0:00"
+        if not math.isfinite(s) or s <= 0 or s > MAX_DURATION:     # also rows saved by older versions
             return "0:00"
         td = timedelta(seconds=int(s))
         total_seconds = int(td.total_seconds())
@@ -990,7 +1004,9 @@ class Aurora(QMainWindow):
         self.lbl_info.setText(f"<span style='font-weight:bold; font-size:14px; color:#ffffff;'>{title}</span><br><span style='color:#a0a0a5; font-size:12px; font-weight:normal;'>{artist}</span>")
         
         try:
-            icon_arg = self.icon_path if os.path.exists(self.icon_path) else 'multimedia-audio-player'
+            # an icon NAME from the system theme: never a file from ~/.aurora, which the sandboxed player can write
+            # and which the desktop's notification service (outside the sandbox) would then read
+            icon_arg = 'vv-aurora'
             # "--": a title starting with "-" is text, not an option; the body is markup for GNOME, so it is escaped
             subprocess.Popen(['notify-send', '-a', 'Aurora', '-i', icon_arg, '--', str(meta['title']), html.escape(str(meta['artist']))])
         except Exception:
@@ -1158,27 +1174,7 @@ def _setup_desktop_integration():
             pass
         return
 
-    if not desktop_file.exists():
-        desktop_dir.mkdir(parents=True, exist_ok=True)
-        python_exec = sys.executable
-        script_path = os.path.abspath(__file__)
-        
-        desktop_content = f"""[Desktop Entry]
-Name=Aurora
-Comment=Aurora Music Player
-Exec={python_exec} {script_path} %F
-Icon=aurora
-Terminal=false
-Type=Application
-Categories=AudioVideo;Audio;Player;
-MimeType=audio/mpeg;audio/x-flac;audio/flac;audio/ogg;audio/x-wav;
-"""
-        try:
-            with open(desktop_file, "w") as f:
-                f.write(desktop_content)
-            subprocess.run(["update-desktop-database", str(desktop_dir)], check=False)
-        except Exception:
-            pass
+    # No launcher of our own is ever written: it would start the player outside the VaeVictis sandbox.
 
 RAISE_PREFIX = '\x01RAISE '
 REPLY_RE = re.compile(r'aurora-reply-\d+-\d+\.sock')
@@ -1219,7 +1215,7 @@ def already_running(files_to_open):
     reply.settimeout(2.0)
     try:
         for f in files_to_open:
-            if os.path.exists(f):
+            if os.path.isfile(f):
                 reply.sendto(os.path.abspath(f).encode('utf-8'), sock_path)
         reply.sendto((RAISE_PREFIX + 'reply').encode('utf-8'), sock_path)
         reply.recvfrom(64)
@@ -1273,7 +1269,7 @@ def main():
     
     if files_to_open:
         for f in files_to_open:
-            if os.path.exists(f):
+            if os.path.isfile(f):
                 win.open_external_file(f)
     
     win.show()

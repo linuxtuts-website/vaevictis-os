@@ -9,16 +9,18 @@ set -e
 PAYLOAD=/usr/lib/vaevictis-tools
 STATE=/var/lib/vaevictis-tools
 
-# path, mode, file in the payload, then the SHA-256 of every VaeVictis version that may be replaced
-# (1.1 for all of them; for the polkit rule and the panic button, 1.0.1 shipped the same files)
-LIST='
-/usr/local/libexec/vv-sandbox                     0755 vv-sandbox               d12d4327e48c81db6ca9fea0e8857df614c707294cf669f6fa8001d146381e36
-/usr/local/libexec/vv-vpn-helper                  0755 vv-vpn-helper            26c4f131dc2819ca32d22474f0096a0fc124e01eaaadaf131a5dbbb049dd94ad
-/usr/local/bin/vv-vpn                             0755 vv-vpn                   d7bc24e0d347fe57d900a044d59647a7cfb3d738cdb01dac3a18e8155711ca49
-/usr/share/polkit-1/actions/org.vaevictis.vpn.policy 0644 org.vaevictis.vpn.policy c049888475f0179b60f82a99184e7f2cd438126ffd9ede45e70cb2c78099798a
-/usr/local/bin/v-snap                             0755 v-snap                   c496231ec2a55f9c4d3a290cb4f564a835c600bc5d5689431857480da37dafc8
-/usr/local/bin/vv-panic                           0755 vv-panic                 4cd6eb1e718c0ca719352064a91a0f4a23614185c6dfe372aec553cf589bc045
-/usr/local/libexec/vv-panic-action                0755 vv-panic-action          1ed1207404ffdc8c2ff4a2767f3610ae3a1b7de79bd587c8be0d77225462fc1b
+# path, mode, file in the payload, then the SHA-256 of every VaeVictis version that may be replaced:
+# the 1.1 image (for the polkit rule and the panic button, 1.0.1 shipped the same files), then vaevictis-tools 1.2.0.
+# EVERY NEW VERSION OF THIS PACKAGE ADDS THE HASHES OF THE PREVIOUS ONE, or systems that have it are not updated.
+LIST='/usr/local/libexec/vv-sandbox                     0755 vv-sandbox               d12d4327e48c81db6ca9fea0e8857df614c707294cf669f6fa8001d146381e36 a5af744469319f25a9d18f244d8a500dc4983948222f03746b84602ca2e66e65
+/usr/local/libexec/vv-vpn-helper                  0755 vv-vpn-helper            26c4f131dc2819ca32d22474f0096a0fc124e01eaaadaf131a5dbbb049dd94ad bc5ffbd8bcc139bc5b5307946b72734c900bd71eabc653cc1756f7884244ecc5
+/usr/local/bin/vv-vpn                             0755 vv-vpn                   d7bc24e0d347fe57d900a044d59647a7cfb3d738cdb01dac3a18e8155711ca49 75309622155f0e9b7df820006ec17d606764d450a8ce57dfe9f2dad39636f0dd
+/usr/share/polkit-1/actions/org.vaevictis.vpn.policy 0644 org.vaevictis.vpn.policy c049888475f0179b60f82a99184e7f2cd438126ffd9ede45e70cb2c78099798a ff7e6861bd7d35155cacd205e7e6a36eba63e393c68392fccf9b984ed57cc527
+/usr/local/bin/v-snap                             0755 v-snap                   c496231ec2a55f9c4d3a290cb4f564a835c600bc5d5689431857480da37dafc8 3635e7499114d44705241aad03c1ff1e29617349d7c6718a1837ae532648b0ec
+/usr/local/bin/vv-panic                           0755 vv-panic                 4cd6eb1e718c0ca719352064a91a0f4a23614185c6dfe372aec553cf589bc045 93b32609f508b84fc2205a0b3cf06fb505dbb2f9822d7f0eed7d18eed92c0b7d
+/usr/local/libexec/vv-panic-action                0755 vv-panic-action          1ed1207404ffdc8c2ff4a2767f3610ae3a1b7de79bd587c8be0d77225462fc1b 412868a112addfc7bf168ab099bfaefc44f521e236ce3d3689e49b4673e1603d
+/usr/local/lib/vaevictis/vv-pdf                   0755 vv-pdf                   c30fcbb859369b8ed566126c111932626cd43adc5f42dcaa53b0f09836dd3ec0
+/usr/local/lib/vaevictis/linpaint                 0755 linpaint                 dbe4acf2fce171665ae8dba8d63c74156aa84577db1536bb5aa948da2bf94f7b
 '
 
 say() { echo "vaevictis-tools: $*"; }

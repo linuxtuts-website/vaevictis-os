@@ -53,7 +53,7 @@ args=(--die-with-parent --new-session
       --tmpfs /run --perms 0700 --dir "$rt"
       --ro-bind "$HOME" "$HOME"
       --bind-try /media /media --bind-try /run/media /run/media --bind-try /mnt /mnt
-      --setenv XDG_RUNTIME_DIR "$rt" --setenv HOME "$HOME" --setenv NO_AT_BRIDGE 1
+      --setenv XDG_RUNTIME_DIR "$rt" --setenv HOME "$HOME" --setenv NO_AT_BRIDGE 1 --setenv PATH /usr/sbin:/usr/bin:/sbin:/bin
       --unsetenv SSH_AUTH_SOCK --unsetenv GPG_AGENT_INFO --unsetenv SESSION_MANAGER --unsetenv DBUS_SESSION_BUS_ADDRESS)
 
 rw() { [ -e "$1" ] && args+=(--bind "$1" "$1"); }        # writable (only what already exists)

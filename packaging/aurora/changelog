@@ -1,3 +1,19 @@
+vaevictis-aurora (1.1.3) unstable; urgency=medium
+
+  * Fixes found with an AI-assisted review (Argon by Google; not an
+    independent security audit):
+  * A file that declares an impossible duration (huge, infinite, not a
+    number) is stored with no duration: before, it crashed the player at
+    every start, until the library was deleted.
+  * Notifications use the icon name from the system theme, never a file in
+    ~/.aurora (which the sandboxed player can write and which the desktop's
+    notification service, outside the sandbox, would read).
+  * No launcher of its own is ever written in ~/.local (it would start the
+    player outside the VaeVictis sandbox); only regular files are opened;
+    ffprobe and notify-send only from the system folders.
+
+ -- linuxtuts-website <292920559+linuxtuts-website@users.noreply.github.com>  Sun, 18 Oct 2026 09:00:00 +0200
+
 vaevictis-aurora (1.1.2) unstable; urgency=medium
 
   * Depends on vaevictis-tools (>= 1.2.0): on VaeVictis, Aurora runs in the

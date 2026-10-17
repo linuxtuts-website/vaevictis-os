@@ -10,15 +10,17 @@ export LC_ALL=C   # the same order of files everywhere
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 out="$root/dist"
-files=(vv-sandbox vv-vpn-helper vv-vpn org.vaevictis.vpn.policy v-snap vv-panic vv-panic-action)
+# NAME-in-the-payload:FILE-in-build/
+files=(vv-sandbox:vv-sandbox vv-vpn-helper:vv-vpn-helper vv-vpn:vv-vpn org.vaevictis.vpn.policy:org.vaevictis.vpn.policy
+       v-snap:v-snap vv-panic:vv-panic vv-panic-action:vv-panic-action vv-pdf:vv-pdf.py linpaint:linpaint.py)
 
-for f in "${files[@]}"; do [ -f "$root/build/$f" ] || { echo "missing: build/$f" >&2; exit 1; }; done
+for e in "${files[@]}"; do [ -f "$root/build/${e#*:}" ] || { echo "missing: build/${e#*:}" >&2; exit 1; }; done
 bash -n "$root/build/vv-sandbox" && bash -n "$root/build/v-snap" && sh -n "$root/build/vv-panic-action"
 python3 -c 'import ast, sys; [ast.parse(open(p, encoding="utf-8").read(), p) for p in sys.argv[1:]]' \
-    "$root/build/vv-vpn-helper" "$root/build/vv-vpn" "$root/build/vv-panic"
+    "$root/build/vv-vpn-helper" "$root/build/vv-vpn" "$root/build/vv-panic" "$root/build/vv-pdf.py" "$root/build/linpaint.py"
 sh -n "$here/postinst" && sh -n "$here/postrm"
 # every payload file must be listed in the postinst
-for f in "${files[@]}"; do grep -q " $f " "$here/postinst" || { echo "postinst does not list $f" >&2; exit 1; }; done
+for e in "${files[@]}"; do grep -q " ${e%%:*} " "$here/postinst" || { echo "postinst does not list ${e%%:*}" >&2; exit 1; }; done
 
 version=$(sed -n 's/^Version: //p' "$here/control")
 epoch=${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct 2>/dev/null || date +%s)}
@@ -27,7 +29,7 @@ trap 'rm -rf "$stage"' EXIT
 chmod 755 "$stage"
 
 install -d -m 755 "$stage/DEBIAN" "$stage/usr/lib/vaevictis-tools" "$stage/usr/share/doc/vaevictis-tools"
-for f in "${files[@]}"; do install -m 644 "$root/build/$f" "$stage/usr/lib/vaevictis-tools/$f"; done
+for e in "${files[@]}"; do install -m 644 "$root/build/${e#*:}" "$stage/usr/lib/vaevictis-tools/${e%%:*}"; done
 install -m 644 "$here/copyright" "$stage/usr/share/doc/vaevictis-tools/copyright"
 gzip -9n -c "$here/changelog" > "$stage/usr/share/doc/vaevictis-tools/changelog.gz"
 chmod 644 "$stage/usr/share/doc/vaevictis-tools/changelog.gz"

@@ -31,8 +31,8 @@ To stop trusting it: `sudo apt purge vaevictis-archive-keyring`. Check what apt 
 
 The 1.1 image put the VaeVictis tools in `/usr/local` (the desktop launchers, the polkit rule and the sudo rule expect them
 there). `vaevictis-tools` carries fixed versions and puts them **at the same paths**: the app sandbox, the VPN manager and its
-helper, the VPN polkit rule, v-snap and the panic button. It arrives with `sudo apt update && sudo apt full-upgrade` (Aurora
-1.1.2 depends on it), or directly: `sudo apt install vaevictis-tools`.
+helper, the VPN polkit rule, v-snap, the panic button and, from 1.3.0, VaeVictis PDF and LinPaint+. It arrives with
+`sudo apt update && sudo apt full-upgrade` (Aurora 1.1.2 and later depend on it), or directly: `sudo apt install vaevictis-tools`.
 
 - A copy is replaced **only if it is exactly a version VaeVictis shipped**. A copy you changed is left alone (the package says
   so), and a missing tool is not added. The replaced copies are kept in `/var/lib/vaevictis-tools/backup/`.

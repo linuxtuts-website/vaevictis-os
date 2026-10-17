@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-10-18: fixes for the 1.1 apps (`vaevictis-tools` 1.3.0, `vaevictis-aurora` 1.1.3)
+
+Fixes found with an AI-assisted review of the three programs that open files from anywhere (Argon by Google), each one
+checked against the code and with a test where possible. This is **not an independent security audit**. The review found
+no way out of the sandbox; what it found are crashes, lost settings and writes that could follow a link, inside what the
+sandbox already allows. `sudo apt update && sudo apt full-upgrade` installs them.
+
+- **Aurora:** a file that declares an impossible duration (huge, infinite, not a number) is stored with no duration (in 1.1
+  it crashed the player at every start, until the library was deleted); notifications use the icon from the system theme,
+  never a file in `~/.aurora`; it never writes a launcher of its own in `~/.local` (one would start it outside the sandbox);
+  only regular files are opened.
+- **VaeVictis PDF:** adding pages from a password-protected PDF asks whether to protect the whole document with that password
+  (in 1.1 the result was saved unprotected, without a word); a PDF with permission restrictions only says that saving does not
+  keep them; extract, split and PNG export write through a temporary file, so a link at the target name is replaced, not
+  followed; pages 0 wide or high, or huge, no longer crash it or fill the memory; the file name in the status bar is plain
+  text.
+- **LinPaint+:** images larger than 8000 x 8000 are refused before they are decoded; the zoomed view and the undo steps
+  are capped in memory; saving goes through a temporary file; cancelling the screenshot dialog no longer opens a second one.
+- **All three, and `vv-sandbox`:** the commands they run are taken only from the system folders.
+- **Packages:** `vaevictis-tools` 1.3.0 now also carries VaeVictis PDF and LinPaint+ (same rule: a copy is replaced only if
+  it is exactly a version VaeVictis shipped); `vaevictis-aurora` 1.1.3.
+
 ## 2026-10-17: fixes for 1.1 (package `vaevictis-tools` 1.2.0; the next ISO will include them)
 
 Fixes found with AI-assisted reviews of the code (Lumo 2.0 Max by Proton, Argon by Google), each one checked against the
