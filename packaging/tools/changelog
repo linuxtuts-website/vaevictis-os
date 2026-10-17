@@ -18,6 +18,9 @@ vaevictis-tools (1.3.0) unstable; urgency=medium
     screenshot dialog no longer opens a second one; helper commands only
     from the system folders.
   * vv-sandbox: PATH inside the sandbox is fixed to the system folders.
+  * vv-sandbox: Aurora and VaeVictis PDF show the close button again (Qt's
+    title bar on GNOME asked the desktop which buttons to draw, over a D-Bus
+    connection the sandbox does not give; now it draws them itself).
   * VPN manager: the server list is readable (it showed light text on a
     white background).
 

@@ -123,7 +123,10 @@ want_x11=0
 [ -n "$wl" ] && [ -S "$wl" ] || want_x11=1                               # an X11 session
 if [ -n "$wl" ] && [ -S "$wl" ]; then
     args+=(--bind "$wl" "$rt/wayland-0" --setenv WAYLAND_DISPLAY wayland-0)
-    [ "$profile" = linpaint ] || args+=(--setenv QT_QPA_PLATFORM wayland --unsetenv DISPLAY --unsetenv XAUTHORITY)
+    # Qt draws its own title bar on GNOME. Its default (Adwaita) style asks the desktop over D-Bus which buttons to show,
+    # and inside the sandbox there is no answer, so it showed no close button. "bradient" always draws them.
+    [ "$profile" = linpaint ] || args+=(--setenv QT_QPA_PLATFORM wayland --setenv QT_WAYLAND_DECORATION bradient
+                                        --unsetenv DISPLAY --unsetenv XAUTHORITY)
 fi
 if [ "$want_x11" -eq 1 ]; then
     n="${DISPLAY:-}"; n="${n#*:}"; n="${n%%.*}"
