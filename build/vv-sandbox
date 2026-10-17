@@ -82,11 +82,14 @@ mkdir -p "$(dirname "$own")" && { [ -d "$own" ] || mkdir -m 0700 "$own"; } && rw
 # - hidden, inside a hidden folder (.bashrc, .config/autostart ...) or inside ~/bin (on PATH at login): read only.
 # - in a normal folder of the home: that folder becomes writable (to save next to it); directly in the home: that file.
 # - in /tmp or /var/tmp (shared with other programs): read only.
+# The program gets the resolved paths of the accepted files only (a link may not exist inside the sandbox).
+open=()
 for f in "$@"; do
     o=$(realpath -ms -- "$f")                                        # the path as given, links NOT followed
     f=$(realpath -e -- "$f" 2>/dev/null) || continue
     [ -f "$f" ] || continue
     case "$f" in /run/media/*) ;; /run/*|/proc/*|/sys/*|/dev/*) continue ;; esac
+    open+=("$f")
     if [ "$o" != "$f" ]; then args+=(--ro-bind "$f" "$f"); continue; fi
     dir=$(dirname "$f")
     case "$f" in
@@ -161,4 +164,4 @@ if [ "${#rules[@]}" -gt 0 ] && command -v xdg-dbus-proxy >/dev/null 2>&1; then
     args+=(--bind "$proxy_dir/bus" "$rt/bus" --setenv DBUS_SESSION_BUS_ADDRESS "unix:path=$rt/bus")
 fi
 
-bwrap "${args[@]}" -- "$prog" "$@"
+bwrap "${args[@]}" -- "$prog" "${open[@]}"
