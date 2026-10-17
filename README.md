@@ -139,7 +139,7 @@ Everything that makes the ISO is in `build/`, in plain shell and Python, readabl
 | Path | What |
 |---|---|
 | `build/` | the `vv-*` tools, installer, programs, boot screens, desktop files: all that goes into the image (keep the files together: scripts find each other next to themselves) |
-| `packaging/` | the Debian packages (`vaevictis-aurora`, `vaevictis-archive-keyring`) |
+| `packaging/` | the Debian packages (`vaevictis-aurora`, `vaevictis-tools`, `vaevictis-archive-keyring`) |
 | `tests/` | tests that run on any Linux machine (VPN helper, kill switch, sandbox) |
 | `docs/` | build guide, updating, coming from 1.0, APT repository procedures |
 | `DISCLAIMER.md` | no warranty, limitation of liability, not for critical use (English and Italian) |

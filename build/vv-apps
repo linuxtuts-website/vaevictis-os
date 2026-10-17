@@ -39,6 +39,9 @@ done
 AURORA_VER=$(sed -n 's/^Version: //p' "$ROOT/packaging/aurora/control")
 DEB="$ROOT/dist/vaevictis-aurora_${AURORA_VER}_all.deb"
 [ -f "$DEB" ] || die "$DEB not found: build it first with  packaging/aurora/build.sh  (from the repository root)"
+TOOLS_VER=$(sed -n 's/^Version: //p' "$ROOT/packaging/tools/control")
+TOOLSDEB="$ROOT/dist/vaevictis-tools_${TOOLS_VER}_all.deb"
+[ -f "$TOOLSDEB" ] || die "$TOOLSDEB not found: build it first with  packaging/tools/build.sh  (Aurora depends on it)"
 if [ "$APT_REPO" = 1 ]; then
     KR_VER=$(sed -n 's/^Version: //p' "$ROOT/packaging/archive-keyring/control")
     KRDEB="$ROOT/dist/vaevictis-archive-keyring_${KR_VER}_all.deb"
@@ -85,10 +88,12 @@ echo "== tools the sandbox needs"
 echo "== sandbox"
 inst 0755 "$HERE/vv-sandbox" usr/local/libexec/vv-sandbox
 
-echo "== Aurora $AURORA_VER (package)"
-cp "$DEB" "$CH/tmp/vv-aurora.deb"
-"$VVC" run dpkg -i /tmp/vv-aurora.deb || { rm -f "$CH/tmp/vv-aurora.deb"; die "dpkg could not install $DEB"; }
-rm -f "$CH/tmp/vv-aurora.deb"
+echo "== Aurora $AURORA_VER and vaevictis-tools $TOOLS_VER (packages)"
+cp "$DEB" "$CH/tmp/vv-aurora.deb"; cp "$TOOLSDEB" "$CH/tmp/vv-tools.deb"
+# the tools package only replaces copies it recognises; the copies below are installed from this repository anyway
+"$VVC" run dpkg -i /tmp/vv-tools.deb /tmp/vv-aurora.deb \
+    || { rm -f "$CH/tmp/vv-aurora.deb" "$CH/tmp/vv-tools.deb"; die "dpkg could not install $DEB and $TOOLSDEB"; }
+rm -f "$CH/tmp/vv-aurora.deb" "$CH/tmp/vv-tools.deb"
 wrapper aurora aurora /usr/bin/aurora "Aurora music player"
 # the menu entry starts the sandboxed one, whatever PATH says (this folder comes before /usr/share)
 put 0644 usr/local/share/applications/aurora.desktop <<'EOF'

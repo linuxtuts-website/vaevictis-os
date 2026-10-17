@@ -11,7 +11,8 @@ the way to install the system the first time.
 The VaeVictis programs (Aurora, LinPaint+, VaeVictis PDF, the `vv-*` tools) are not in Debian's archive. They are being turned
 into ordinary Debian packages (`.deb`), one at a time, and published in a **signed APT repository**:
 <https://apt.linuxtuts.online/> (the files are in [`vaevictis-apt`](https://github.com/linuxtuts-website/vaevictis-apt)).
-Today it holds **Aurora** (`vaevictis-aurora`) and the repository's own key package (`vaevictis-archive-keyring`).
+Today it holds **Aurora** (`vaevictis-aurora`), the **fixed VaeVictis tools** (`vaevictis-tools`, see below) and the
+repository's own key package (`vaevictis-archive-keyring`).
 
 ### From 1.1: already configured
 
@@ -25,6 +26,19 @@ A system installed from the 1.1 ISO has the package `vaevictis-archive-keyring`,
   automatically in the background (only Debian's security updates are).
 
 To stop trusting it: `sudo apt purge vaevictis-archive-keyring`. Check what apt would take from where: `apt policy vaevictis-aurora`.
+
+### The fixed tools: `vaevictis-tools`
+
+The 1.1 image put the VaeVictis tools in `/usr/local` (the desktop launchers, the polkit rule and the sudo rule expect them
+there). `vaevictis-tools` carries fixed versions and puts them **at the same paths**: the app sandbox, the VPN manager and its
+helper, the VPN polkit rule, v-snap and the panic button. It arrives with `sudo apt update && sudo apt full-upgrade` (Aurora
+1.1.2 depends on it), or directly: `sudo apt install vaevictis-tools`.
+
+- A copy is replaced **only if it is exactly a version VaeVictis shipped**. A copy you changed is left alone (the package says
+  so), and a missing tool is not added. The replaced copies are kept in `/var/lib/vaevictis-tools/backup/`.
+- Removing the package does not restore the old copies (`sudo apt purge vaevictis-tools` also deletes the backups).
+- On 1.0 and 1.0.1, the VPN manager and v-snap are different versions, so they stay as they are; only the files identical to
+  1.1 (the VPN polkit rule and the panic button) are replaced. For the rest, see [FROM-1.0.md](FROM-1.0.md).
 
 ### On 1.0 / 1.0.1: add it yourself
 

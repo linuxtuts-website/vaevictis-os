@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.2 (not released yet)
+
+Fixes found with AI-assisted reviews of the code (Lumo 2.0 Max by Proton, Argon by Google), each one checked against the
+code and, where possible, with a test. This is **not an independent security audit**: AI reviews miss problems and report
+problems that do not exist. Systems installed from 1.1 get these fixes as the package **`vaevictis-tools`** from the
+VaeVictis APT repository (`sudo apt update && sudo apt full-upgrade`).
+
+- **Sandbox (`vv-sandbox`):** only regular files given as arguments, checked after following links; a file reached through a
+  link is made visible alone and read-only; hidden files, files in hidden folders and in `~/bin` are read-only; nothing of
+  `/run` (except `/run/media`), `/proc`, `/sys` or `/dev`; never a folder. In 1.1, a crafted link opened with one of the three
+  programs could make `~/.bashrc`, the whole home folder or the session's runtime folder writable inside the sandbox.
+  Secrets moved elsewhere behind a link are now hidden at their real place.
+- **VPN:** `Table` other than `auto` and `FwMark` are refused (with `Table = off` the tunnel showed as connected while the
+  traffic left outside it, when the kill switch was off); every `[Peer]` needs an `Endpoint`; the password is asked at every
+  action (it was kept for about five minutes, during which any program of the session could switch the kill switch off);
+  disconnecting a tunnel never releases the kill switch of another one; the kill switch flag is readable by root only.
+- **Installer:** refuses to finish if an account of the live session is still there; no separate partition for anything
+  under `/usr`, nor for `/var`, `/var/lib` or APT's state.
+- **v-snap:** refuses a system snapshot or restore when `/usr`, `/usr/local`, `/var` or `/var/lib` are separate partitions (the
+  snapshot would leave them out); never copies or deletes another snapshot store.
+- **Panic button, VPN manager:** the commands they run are taken only from the system folders.
+- **Packages:** new `vaevictis-tools` 1.2.0; `vaevictis-aurora` 1.1.2 depends on it (the player is unchanged).
+
 ## 1.1 (2026-10-16)
 
 Systems installed from 1.0 still need the [2026-10-12 security notice](docs/SECURITY-NOTICE-2026-10-12.md);

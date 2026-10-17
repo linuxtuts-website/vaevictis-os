@@ -150,7 +150,7 @@ done
 
 head_ "Packages"
 for p in systemd-cryptsetup cryptsetup-initramfs console-setup ffmpegthumbnailer firefox-esr grub-efi-amd64-bin grub-pc-bin os-prober efibootmgr \
-         nftables fail2ban apparmor keepassxc lynis vaevictis-aurora bubblewrap xdg-dbus-proxy xdg-user-dirs plymouth plymouth-label \
+         nftables fail2ban apparmor keepassxc lynis vaevictis-aurora vaevictis-tools bubblewrap xdg-dbus-proxy xdg-user-dirs plymouth plymouth-label \
          fonts-ibm-plex wl-clipboard wireguard-tools openresolv; do
     pkg_ok "$p" && ok "$p" || bad "$p is not installed"
 done

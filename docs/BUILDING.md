@@ -51,6 +51,7 @@ A Debian or Ubuntu machine with: `debootstrap`, `squashfs-tools`, `xorriso`, `mt
 | What | Where in the image |
 |---|---|
 | Aurora | the package `vaevictis-aurora` (`/usr/bin/aurora`), built by `packaging/aurora/build.sh` |
+| fixed tools for 1.1 systems | the package `vaevictis-tools`, built by `packaging/tools/build.sh` (Aurora depends on it); in the image it changes nothing, since the same versions are installed from `build/` |
 | VaeVictis PDF, LinPaint+ | `/usr/local/lib/vaevictis/vv-pdf`, `/usr/local/lib/vaevictis/linpaint` (from `vv-pdf.py`, `linpaint.py`) |
 | their commands | `/usr/local/bin/aurora`, `vv-pdf`, `linpaint`: three-line scripts that always start the program through `vv-sandbox` |
 | the sandbox | `/usr/local/libexec/vv-sandbox` (bubblewrap + xdg-dbus-proxy): see the comment at its top for what each program may do |

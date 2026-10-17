@@ -1,0 +1,58 @@
+#!/bin/sh
+# vaevictis-tools: puts the fixed VaeVictis tools in place of the copies the 1.1 image installed, at the same paths
+# (the desktop launchers, the polkit rule and the sudo rule expect them there).
+# A copy is replaced ONLY if it is exactly a version VaeVictis shipped, or already this version. Any other copy
+# (changed locally, or from 1.0 / 1.0.1) is left alone with a message, and a missing tool is never added.
+# Every replaced copy is kept in /var/lib/vaevictis-tools/backup/DATE/.
+set -e
+
+PAYLOAD=/usr/lib/vaevictis-tools
+STATE=/var/lib/vaevictis-tools
+
+# path, mode, file in the payload, then the SHA-256 of every VaeVictis version that may be replaced
+# (1.1 for all of them; for the polkit rule and the panic button, 1.0.1 shipped the same files)
+LIST='
+/usr/local/libexec/vv-sandbox                     0755 vv-sandbox               d12d4327e48c81db6ca9fea0e8857df614c707294cf669f6fa8001d146381e36
+/usr/local/libexec/vv-vpn-helper                  0755 vv-vpn-helper            26c4f131dc2819ca32d22474f0096a0fc124e01eaaadaf131a5dbbb049dd94ad
+/usr/local/bin/vv-vpn                             0755 vv-vpn                   d7bc24e0d347fe57d900a044d59647a7cfb3d738cdb01dac3a18e8155711ca49
+/usr/share/polkit-1/actions/org.vaevictis.vpn.policy 0644 org.vaevictis.vpn.policy c049888475f0179b60f82a99184e7f2cd438126ffd9ede45e70cb2c78099798a
+/usr/local/bin/v-snap                             0755 v-snap                   c496231ec2a55f9c4d3a290cb4f564a835c600bc5d5689431857480da37dafc8
+/usr/local/bin/vv-panic                           0755 vv-panic                 4cd6eb1e718c0ca719352064a91a0f4a23614185c6dfe372aec553cf589bc045
+/usr/local/libexec/vv-panic-action                0755 vv-panic-action          1ed1207404ffdc8c2ff4a2767f3610ae3a1b7de79bd587c8be0d77225462fc1b
+'
+
+say() { echo "vaevictis-tools: $*"; }
+
+case "$1" in
+    configure)
+        install -d -m 0700 "$STATE"
+        backup="$STATE/backup/$(date +%Y%m%d-%H%M%S)"
+        echo "$LIST" | while read -r target mode name known; do
+            [ -n "$target" ] || continue
+            new="$PAYLOAD/$name"
+            newsum=$(sha256sum "$new" | cut -d' ' -f1)
+            if [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; then
+                say "$target is not a regular file: left alone, NOT updated."
+                continue
+            fi
+            if [ ! -e "$target" ]; then
+                say "$target is not on this system: not added."
+                continue
+            fi
+            cur=$(sha256sum "$target" | cut -d' ' -f1)
+            [ "$cur" != "$newsum" ] || continue                  # already this version
+            case " $known " in
+                *" $cur "*) ;;
+                *) say "$target is not a version VaeVictis shipped (changed locally, or from 1.0 / 1.0.1): left alone, NOT updated."
+                   continue ;;
+            esac
+            install -d -m 0700 "$backup$(dirname "$target")"
+            cp -p "$target" "$backup$target"
+            install -o root -g root -m "$mode" "$new" "$target.vaevictis-new"
+            mv -f "$target.vaevictis-new" "$target"
+            say "updated $target (old copy: $backup$target)"
+        done
+        ;;
+esac
+
+exit 0

@@ -44,6 +44,7 @@ rc, err = run(h, h.cmd_up, "pip", True)
 check(rc == 0, f"A rc {rc} {err}")
 check('oifname "pip" accept' in nft_has() and "185.159.157.1" in nft_has() and "chain forward" in nft_has(), "A rules")
 check(os.path.exists(h.KS_FLAG), "A flag")
+check(stat.S_IMODE(os.stat(h.KS_FLAG).st_mode) == 0o600, "A flag root-only (1.2)")
 check(("dns+", "pip", ("10.2.0.1",)) in calls, "A dns")
 rt = f"{T}/run/run/pip.conf"
 check(stat.S_IMODE(os.stat(rt).st_mode) == 0o600 and stat.S_IMODE(os.stat(f"{T}/run/run").st_mode) == 0o700, "A perms")
@@ -90,6 +91,11 @@ h = setup(load(), dns_ok=False); calls.clear()
 rc, err = run(h, h.cmd_up, "pip", True)
 check(rc == 1 and "DNS" in err and ("wg-quick", "down") == [c for c in calls if c[0] == "wg-quick"][-1][:2], f"F {rc} {err}")
 check(nft_has() != "", "F kill switch stays")
+
+# G0: disconnecting ANOTHER tunnel never releases the kill switch that guards "pip" (1.2)
+h = setup(load()); calls.clear()
+rc, err = run(h, h.cmd_down, "other")
+check(nft_has() != "" and open(h.KS_FLAG).read().strip() == "pip", f"G0 kill switch of pip kept {rc} {err}")
 
 # G: disconnect: everything back to normal
 h = setup(load()); calls.clear()

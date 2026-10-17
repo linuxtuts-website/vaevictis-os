@@ -1,0 +1,9 @@
+#!/bin/sh
+# The fixed tools stay where they are when this package is removed. Purge also deletes the backups of the old copies.
+set -e
+
+if [ "$1" = "purge" ]; then
+    rm -rf /var/lib/vaevictis-tools
+fi
+
+exit 0

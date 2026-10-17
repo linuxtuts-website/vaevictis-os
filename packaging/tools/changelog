@@ -1,0 +1,22 @@
+vaevictis-tools (1.2.0) unstable; urgency=medium
+
+  * First release, for systems installed from VaeVictis OS 1.1. Fixes found
+    with AI-assisted reviews (not an independent security audit):
+  * vv-sandbox: only regular files given as arguments, after following links;
+    a file reached through a link is bound alone and read-only; hidden files,
+    files in hidden folders and in ~/bin are read-only; nothing of /run (except
+    /run/media), /proc, /sys or /dev; never a folder; secrets moved elsewhere
+    behind a link are hidden at their real place; the program gets the
+    resolved paths of the accepted files only.
+  * vv-vpn-helper: "Table" other than auto and "FwMark" are refused (custom
+    routing could leave the traffic outside the tunnel while it shows as
+    connected); every [Peer] needs an Endpoint; the kill switch flag is
+    root-only; disconnecting a tunnel never releases the kill switch of
+    another one.
+  * VPN polkit rule: the password is asked at every action (auth_admin).
+  * v-snap: refuses a system snapshot or restore when /usr, /usr/local, /var
+    or /var/lib are separate partitions; never copies or deletes another
+    snapshot store.
+  * vv-vpn, vv-panic, vv-panic-action: commands only from the system folders.
+
+ -- linuxtuts-website <292920559+linuxtuts-website@users.noreply.github.com>  Sat, 17 Oct 2026 09:00:00 +0200

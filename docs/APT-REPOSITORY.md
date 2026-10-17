@@ -31,7 +31,7 @@ installs only Debian security updates.
 ## Publishing and re-signing
 
 ```
-packaging/aurora/build.sh                       # or the package you changed
+packaging/aurora/build.sh                       # or packaging/tools/build.sh: the package you changed
 build/vv-apt-publish --repo ~/vaevictis-apt --key 0A41158C1DD6718D3D3FFED068486B39B2A99993 dist/vaevictis-aurora_X_all.deb
 git -C ~/vaevictis-apt status                   # check, then commit and push yourself
 ```

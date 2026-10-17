@@ -53,6 +53,16 @@ refuses(proton.replace("PublicKey = " + PUB, ""), "PublicKey")
 refuses(proton.replace("[Peer]", "[Server]"), "unknown section")
 refuses(proton + "Table = 1; reboot\n", "Table")
 refuses(proton.replace("Endpoint", "Endpoint = 1.2.3.4:1\nEndpoint"), "twice")
+# custom routing could leave the traffic outside the tunnel while it shows as connected (1.2)
+in_iface = lambda line: proton.replace("[Peer]", line + "\n\n[Peer]", 1)
+refuses(in_iface("Table = off"), "Table")
+refuses(in_iface("Table = 1234"), "Table")
+refuses(in_iface("Table = main"), "Table")
+refuses(in_iface("FwMark = 0x1"), "FwMark")
+h.parse_conf(in_iface("Table = auto")); ok += 1
+# client configs only: every peer has its server address (1.2)
+refuses(proton.replace("Endpoint = 185.159.157.1:51820", ""), "Endpoint")
+refuses(split + f"[Peer]\nPublicKey = {key()}\nAllowedIPs = 0.0.0.0/0\n", "Endpoint")
 
 # rebuilt config, IPv6 off
 secs = h.parse_conf(proton)
