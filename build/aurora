@@ -769,7 +769,7 @@ class Aurora(QMainWindow):
             
             t_item = QTableWidgetItem(title if file_exists else f"[OFFLINE] {title}")
             a_item = QTableWidgetItem(artist)
-            d_item = QTableWidgetItem(self.fmt_time(dur) if dur > 0 else "0:00")
+            d_item = QTableWidgetItem(self.fmt_time(dur))     # fmt_time also handles NULL (a NaN saved by 1.1)
             
             t_item.setData(Qt.ItemDataRole.UserRole, {'path': path, 'id': db_id})
             
@@ -1123,7 +1123,7 @@ class Aurora(QMainWindow):
             
             t_item = QTableWidgetItem(title if file_exists else f"[OFFLINE] {title}")
             a_item = QTableWidgetItem(artist)
-            d_item = QTableWidgetItem(self.fmt_time(dur) if dur > 0 else "0:00")
+            d_item = QTableWidgetItem(self.fmt_time(dur))     # fmt_time also handles NULL (a NaN saved by 1.1)
             t_item.setData(Qt.ItemDataRole.UserRole, {'path': path, 'id': db_id})
             
             if not file_exists:

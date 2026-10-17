@@ -163,6 +163,16 @@ class ThumbList(QListWidget):
         super().dropEvent(e)
         self.reordered.emit()
 
+def _set_mode(tmp, path):
+    """A temporary file is created readable by its owner only: give the saved file the permissions of the file it
+    replaces (a regular file, never a link's target), or the usual ones for a new file (as the umask says)."""
+    if os.path.isfile(path) and not os.path.islink(path):
+        shutil.copymode(path, tmp)
+    else:
+        mask = os.umask(0); os.umask(mask)
+        os.chmod(tmp, 0o666 & ~mask)
+
+
 class VaeVictisPDF(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -855,11 +865,14 @@ class VaeVictisPDF(QMainWindow):
                 r = QMessageBox.question(self, "Protected pages",
                     f"{os.path.basename(name)} is protected by a password.\n\nProtect the whole document with the same "
                     "password when you save it? (No: it will be saved WITHOUT protection.)")
-                if r == QMessageBox.StandardButton.Yes: self.password = pw2
+                protect = r == QMessageBox.StandardButton.Yes
+            else:
+                protect = False
             try:
                 self.doc.insert_pdf(d2, start_at=pos)
                 pos += len(d2)
                 added += len(d2)
+                if protect: self.password = pw2          # only once its pages are really in the document
             except Exception as e: _box(self, QMessageBox.Icon.Warning, "Merge failed", f"{os.path.basename(name)}\n\n{e}")
             finally: d2.close()
         if not added: self.undo_stack.pop(); return
@@ -969,6 +982,7 @@ class VaeVictisPDF(QMainWindow):
         os.close(fd)
         try:
             write(tmp)
+            _set_mode(tmp, path)
             os.replace(tmp, path)
         finally:
             if os.path.exists(tmp): os.remove(tmp)
@@ -979,7 +993,7 @@ class VaeVictisPDF(QMainWindow):
             fd, tmp = tempfile.mkstemp(suffix=".pdf", prefix=".vvpdf_", dir=os.path.dirname(os.path.abspath(path)))
             os.close(fd)
             self.doc.save(tmp, **self._save_opts())
-            if os.path.exists(path): shutil.copymode(path, tmp)
+            _set_mode(tmp, path)
             os.replace(tmp, path)
             tmp = None
         except Exception as e:

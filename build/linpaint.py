@@ -801,6 +801,7 @@ class LinPaint:
             z = self.zoom_level
             if self.img.width * self.img.height * z * z > MAX_VIEW_PIXELS:     # a big image at a big zoom
                 z = (MAX_VIEW_PIXELS / (self.img.width * self.img.height)) ** 0.5
+                self.zoom_level = z          # the mouse position is converted with zoom_level: keep it the real one
             w = max(1, int(self.img.width * z))
             h = max(1, int(self.img.height * z))
             resample = Image.Resampling.NEAREST if self.zoom_level > 1 else Image.Resampling.LANCZOS
@@ -1424,6 +1425,9 @@ class LinPaint:
                 self.img.save(tmp, format=fmt)
             if os.path.isfile(path) and not os.path.islink(path):
                 shutil.copymode(path, tmp)
+            else:                            # a new file: the usual permissions (mkstemp makes it owner-only)
+                mask = os.umask(0); os.umask(mask)
+                os.chmod(tmp, 0o666 & ~mask)
             os.replace(tmp, path)
             tmp = None
         except Exception as e:

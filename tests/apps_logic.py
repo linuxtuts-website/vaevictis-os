@@ -64,11 +64,16 @@ for v in (float("inf"), float("nan"), -3.0, 1e12):
     check(meta(None, wav)["duration"] == 0, f"duration {v!r} kept")
 ns["mutagen"] = types.SimpleNamespace(File=lambda p, easy=True: Fake(245.5))
 check(meta(None, wav)["duration"] == 245.5, "a normal duration is kept")
+# a NaN saved by 1.1 comes back from SQLite as NULL: the list must not compare it with "> 0"
+import sqlite3
+db = sqlite3.connect(":memory:"); db.execute("CREATE TABLE t (d REAL)"); db.execute("INSERT INTO t VALUES (?)", (float("nan"),))
+check(db.execute("SELECT d FROM t").fetchone()[0] is None and fmt(None, None) == "0:00", "a NULL duration shows 0:00")
+check("if dur > 0 else" not in open(A, encoding="utf-8").read(), "the list never compares a stored duration")
 
 # ---------------------------------------------------------------- VaeVictis PDF: writes never follow a link
 import fitz
 P = os.path.join(B, "vv-pdf.py")
-ns = funcs(P, ["_save_new", "_effective_zoom"], {"os": os, "tempfile": tempfile, "max": max, "min": min,
+ns = funcs(P, ["_save_new", "_set_mode", "_effective_zoom"], {"os": os, "tempfile": tempfile, "shutil": shutil, "max": max, "min": min,
                                                  "PAD": const(P, "PAD"), "BASE_SCALE": const(P, "BASE_SCALE")})
 save_new = ns["_save_new"]
 victim = os.path.join(T, "budget.pdf"); open(victim, "wb").write(b"precious")
@@ -81,6 +86,15 @@ for target in (link, dangling):
 check(open(victim, "rb").read() == b"precious" and not os.path.exists(os.path.join(T, "nowhere.pdf")),
       "the link targets are untouched")
 check(not [f for f in os.listdir(T) if f.startswith(".vvpdf_")], "no temporary file left")
+# permissions: a new file as the umask says (not owner-only like the temporary file), a replaced file keeps its own
+os.umask(0o022)
+fresh = os.path.join(T, "fresh.pdf"); save_new(None, fresh, lambda tmp: doc.save(tmp))
+check(os.stat(fresh).st_mode & 0o777 == 0o644, f"new PDF mode {oct(os.stat(fresh).st_mode & 0o777)}")
+os.chmod(fresh, 0o640); save_new(None, fresh, lambda tmp: doc.save(tmp))
+check(os.stat(fresh).st_mode & 0o777 == 0o640, "a replaced PDF keeps its permissions")
+check(os.stat(victim).st_mode & 0o777 != 0o777, "the link target's permissions are not used")
+check("protect = r == QMessageBox.StandardButton.Yes" in open(P, encoding="utf-8").read()
+      and "if protect: self.password = pw2" in open(P, encoding="utf-8").read(), "password set only after the pages are added")
 # a page 0 points wide or high must not crash the zoom
 class VP:
     def width(self): return 800
@@ -118,7 +132,10 @@ me = Me()
 pic = os.path.join(T, "important.png"); Image.new("RGB", (5, 5), "blue").save(pic)
 plink = os.path.join(T, "download.png"); os.symlink(pic, plink)
 check(ns["write_file"](me, plink) is True and not os.path.islink(plink), "save replaces the link with the file")
+check(os.stat(plink).st_mode & 0o777 == 0o644, f"new image mode {oct(os.stat(plink).st_mode & 0o777)}")
 with Image.open(pic) as im: check(im.size == (5, 5), "the link target is untouched")
+os.chmod(pic, 0o600); ns["write_file"](me, pic)
+check(os.stat(pic).st_mode & 0o777 == 0o600, "a replaced image keeps its permissions")
 for ext in (".jpg", ".png", ".bmp"):
     out = os.path.join(T, "out" + ext)
     check(ns["write_file"](me, out) and Image.open(out).size == (40, 30), f"save as {ext}")
@@ -130,6 +147,18 @@ ok_img = os.path.join(T, "ok.png"); Image.new("RGB", (100, 80)).save(ok_img)
 ns["load_file"](me2, ok_img)
 check(me2.img.size == (100, 80), "a normal image opens")
 check("if code == 1:" in open(L, encoding="utf-8").read(), "cancelling the screenshot does not ask twice")
+# the zoom cap: the zoom used for the mouse position must be the one of the picture on screen
+rf = funcs(L, ["refresh", "pos"], {"Image": Image, "MAX_VIEW_PIXELS": const(L, "MAX_VIEW_PIXELS"), "max": max, "min": min, "int": int,
+                                   "ImageTk": types.SimpleNamespace(PhotoImage=lambda v: v)})
+shown_view = {}
+cv = types.SimpleNamespace(itemconfig=lambda i, image: shown_view.update(v=image), config=lambda **k: None,
+                           canvasx=lambda x: x, canvasy=lambda y: y)
+me3 = types.SimpleNamespace(img=Image.new("RGB", (6000, 6000)), zoom_level=4.0, canvas=cv, img_id=1)
+rf["refresh"](me3)
+v = shown_view["v"]
+check(v.width * v.height <= const(L, "MAX_VIEW_PIXELS") * 1.01, f"capped view {v.width}x{v.height}")
+x, y = rf["pos"](me3, types.SimpleNamespace(x=v.width - 1, y=v.height // 2))
+check(abs(x - 5999) <= 2 and abs(y - 3000) <= 2, f"mouse at the right edge of the view -> pixel {x},{y}")
 
 shutil.rmtree(T)
 print(f"apps logic: {n} checks passed")

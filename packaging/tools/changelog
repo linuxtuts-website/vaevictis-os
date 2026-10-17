@@ -10,11 +10,13 @@ vaevictis-tools (1.3.0) unstable; urgency=medium
     write through a temporary file, so a link at the target name is
     replaced, never followed; extracting onto the open document is refused;
     pages 0 wide or high no longer crash it; a huge page cannot fill the
-    memory on PNG export; the file name in the status bar is plain text.
+    memory on PNG export; the file name in the status bar is plain text;
+    saved files get the usual permissions (a replaced file keeps its own).
   * LinPaint+: images larger than 8000 x 8000 are refused when opened or
     pasted (the size is checked before decoding); the zoomed view and the
-    undo steps are capped in memory; saving goes through a temporary file
-    (a link at that name is replaced, never followed); cancelling the
+    undo steps are capped in memory (drawing stays where the mouse is);
+    saving goes through a temporary file (a link at that name is replaced,
+    never followed; permissions as usual); cancelling the
     screenshot dialog no longer opens a second one; helper commands only
     from the system folders.
   * vv-sandbox: PATH inside the sandbox is fixed to the system folders.

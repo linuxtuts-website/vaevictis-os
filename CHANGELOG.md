@@ -8,7 +8,7 @@ no way out of the sandbox; what it found are crashes, lost settings and writes t
 sandbox already allows. `sudo apt update && sudo apt full-upgrade` installs them.
 
 - **Aurora:** a file that declares an impossible duration (huge, infinite, not a number) is stored with no duration (in 1.1
-  it crashed the player at every start, until the library was deleted); notifications use the icon from the system theme,
+  it crashed the player at every start, until the library was deleted; a library that already holds one opens again); notifications use the icon from the system theme,
   never a file in `~/.aurora`; it never writes a launcher of its own in `~/.local` (one would start it outside the sandbox);
   only regular files are opened.
 - **VaeVictis PDF:** adding pages from a password-protected PDF asks whether to protect the whole document with that password
