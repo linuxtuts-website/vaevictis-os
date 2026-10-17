@@ -1,0 +1,9 @@
+#!/bin/sh
+# vaevictis-archive-keyring 2026.10.18: the VaeVictis APT repository is closed. This version removes the source entry
+# and the pin that earlier versions installed (a copy changed locally is kept as .dpkg-bak, which apt ignores); the key
+# goes away with the files of the earlier version, since this one ships none.
+set -e
+dpkg-maintscript-helper rm_conffile /etc/apt/sources.list.d/vaevictis.sources 2026.10.18~ vaevictis-archive-keyring -- "$@"
+dpkg-maintscript-helper rm_conffile /etc/apt/preferences.d/vaevictis 2026.10.18~ vaevictis-archive-keyring -- "$@"
+
+exit 0
