@@ -19,6 +19,7 @@ sandbox already allows. `sudo apt update && sudo apt full-upgrade` installs them
 - **LinPaint+:** images larger than 8000 x 8000 are refused before they are decoded; the zoomed view and the undo steps
   are capped in memory; saving goes through a temporary file; cancelling the screenshot dialog no longer opens a second one.
 - **All three, and `vv-sandbox`:** the commands they run are taken only from the system folders.
+- **VPN manager:** the server list is readable (light text on a white background in 1.1).
 - **Packages:** `vaevictis-tools` 1.3.0 now also carries VaeVictis PDF and LinPaint+ (same rule: a copy is replaced only if
   it is exactly a version VaeVictis shipped); `vaevictis-aurora` 1.1.3.
 

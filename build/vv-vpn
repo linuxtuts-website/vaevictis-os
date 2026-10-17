@@ -46,6 +46,9 @@ button.primary.danger { background: #ff5d5d; color: #0b0b0e; }
 button.primary.danger:hover { background: #ff8080; }
 button.primary:disabled { background: #1c1c22; color: #505055; }
 combobox button.combo { padding: 6px 10px; }
+menu, .menu { background-color: #15151a; color: #e2e2e5; border: 1px solid #2a2a32; }
+menu menuitem { color: #e2e2e5; padding: 6px 10px; }
+menu menuitem:hover { background-color: #2a2a32; color: #ffffff; }
 separator { background: #1c1c22; min-height: 1px; }
 """
 
