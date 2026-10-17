@@ -13,7 +13,8 @@ licence already says, and adds what you should know before you use it.
 - **Written by AI.** The maintainer is not a programmer. The project's own code (installer, tools, apps) is written entirely
   by AI assistants, directed and tested by the maintainer.
 - **Never audited.** No independent security expert has checked the code: a professional audit costs thousands of euros,
-  which a project with no income cannot pay. It may contain bugs and security holes that nobody has found yet.
+  which a project with no income cannot pay. It was only reviewed with AI tools (Lumo 2.0 Max by Proton and Argon by Google,
+  October 2026), which miss problems: it may contain bugs and security holes that nobody has found yet.
 - **No guarantees.** Provided as is, without warranty of any kind. Do not rely on it where your safety, your freedom or your
   money are at stake: use Tails or Qubes OS instead. You use VaeVictis at your own risk.
 
@@ -85,8 +86,9 @@ originale inglese.
 - **Scritto dall’intelligenza artificiale.** Il maintainer non è un programmatore. Il codice proprio del progetto (installer,
   strumenti, app) è scritto interamente da assistenti di intelligenza artificiale, sotto la sua direzione e con i suoi test.
 - **Mai verificato da esperti indipendenti.** Nessun esperto di sicurezza indipendente ha controllato il codice: un audit
-  professionale costa migliaia di euro, una spesa che un progetto senza ricavi non può sostenere. Può contenere errori e
-  falle di sicurezza che nessuno ha ancora trovato.
+  professionale costa migliaia di euro, una spesa che un progetto senza ricavi non può sostenere. È stato rivisto solo con
+  strumenti di intelligenza artificiale (Lumo 2.0 Max di Proton e Argon di Google, ottobre 2026), che non trovano tutto: può
+  contenere errori e falle di sicurezza che nessuno ha ancora trovato.
 - **Nessuna garanzia.** Fornito così com'è, senza garanzie di alcun tipo. Non affidarti a VaeVictis dove sono in gioco la tua
   sicurezza, la tua libertà o il tuo denaro: usa invece Tails o Qubes OS. Lo usi a tuo rischio.
 

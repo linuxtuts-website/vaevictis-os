@@ -5,11 +5,14 @@ Live USB, graphical desktop (GNOME), disk-encrypting installer. Free, open, and 
 
 **Status: 1.1, maintenance mode** (see below). Download page: <https://vaevictisos.org/>
 
+**Installed 1.1?** Run `sudo apt update && sudo apt full-upgrade`: it brings the package `vaevictis-tools` 1.2.0 with the
+fixes of October 2026 (see the [changelog](CHANGELOG.md) and [docs/UPDATING.md](docs/UPDATING.md)).
+
 > **Read this first: a hobby project, with no guarantees**
 >
 > - **Hobby, non-profit.** One person makes VaeVictis in their free time, purely out of passion for Linux. No company and no income: everything is free.
 > - **Written by AI.** The maintainer is not a programmer. The project's own code (installer, tools, apps) is written entirely by AI assistants, directed and tested by the maintainer.
-> - **Never audited.** No independent security expert has checked the code: a professional audit costs thousands of euros, which a project with no income cannot pay. It may contain bugs and security holes that nobody has found yet.
+> - **Never audited.** No independent security expert has checked the code: a professional audit costs thousands of euros, which a project with no income cannot pay. It was only reviewed with AI tools (Lumo 2.0 Max by Proton and Argon by Google, October 2026), which miss problems: it may contain bugs and security holes that nobody has found yet.
 > - **No guarantees.** Provided as is, without warranty of any kind. Do not rely on it where your safety, your freedom or your money are at stake: use Tails or Qubes OS instead. You use VaeVictis at your own risk.
 >
 > Every protection described here is designed to reduce a risk; none is guaranteed (GPL-3.0, sections 15 and 16). Read the

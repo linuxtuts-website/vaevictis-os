@@ -27,7 +27,9 @@ no new features. Older releases (and the HIDS of 1.0 and 1.0.1) receive no fixes
 ## Code review welcome
 
 The code has not been audited by an independent third party: a professional audit costs thousands of euros, which a hobby
-project with no income cannot afford. Reviews of the parts that run as root are especially
+project with no income cannot afford. In October 2026 it was reviewed with AI tools (Lumo 2.0 Max by Proton and Argon by
+Google); the problems confirmed were fixed in `vaevictis-tools` 1.2.0 (see the changelog). That is not an independent
+security audit: AI reviews miss problems and report problems that do not exist. Reviews of the parts that run as root are especially
 welcome: `build/vv-vpn-helper`, `build/vaevictis_install.sh`, `build/v-snap`, `build/vv-grub-password`, `build/vv-panic-action`,
 and the sandbox `build/vv-sandbox`. Report anything security-relevant privately, as described above.
 

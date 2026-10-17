@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2 (not released yet)
+## 2026-10-17: fixes for 1.1 (package `vaevictis-tools` 1.2.0; the next ISO will include them)
 
 Fixes found with AI-assisted reviews of the code (Lumo 2.0 Max by Proton, Argon by Google), each one checked against the
 code and, where possible, with a test. This is **not an independent security audit**: AI reviews miss problems and report
