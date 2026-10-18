@@ -13,7 +13,7 @@ response time, but reports are read and answered.
 ## Scope
 
 In scope: the scripts and programs in this repository (installer, `vv-*` tools, VPN manager and its privileged helper, the
-sandbox of the desktop programs, `v-snap`, the boot menu password, the APT repository and its packages, firewall rules and
+sandbox of the desktop programs, `v-snap`, the boot menu password, the Debian packages built here, firewall rules and
 hardening settings), and mistakes in how the ISO is assembled (for example a file that should not be in the image).
 
 Out of scope: vulnerabilities in Debian packages themselves (report them to Debian), attacks that need an already-compromised root, and
@@ -28,7 +28,7 @@ no new features. Older releases (and the HIDS of 1.0 and 1.0.1) receive no fixes
 
 The code has not been audited by an independent third party: a professional audit costs thousands of euros, which a hobby
 project with no income cannot afford. In October 2026 it was reviewed with AI tools (Lumo 2.0 Max by Proton and Argon by
-Google); the problems confirmed were fixed in `vaevictis-tools` 1.2.0 and 1.3.0 and in Aurora 1.1.3 (see the changelog). That is not an independent
+Google); the problems confirmed were fixed in 1.2 (for systems installed from 1.1: `vaevictis-tools` 1.2.0 and 1.3.0, Aurora 1.1.3; see the changelog). That is not an independent
 security audit: AI reviews miss problems and report problems that do not exist. Reviews of the parts that run as root are especially
 welcome: `build/vv-vpn-helper`, `build/vaevictis_install.sh`, `build/v-snap`, `build/vv-grub-password`, `build/vv-panic-action`,
 and the sandbox `build/vv-sandbox`. Report anything security-relevant privately, as described above.

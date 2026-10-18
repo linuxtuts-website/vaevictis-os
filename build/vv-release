@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # vv-release - turn the newest ISO into a publishable release
 #
-#   vv-release [VERSION] [--iso PATH] [--sign [--key FINGERPRINT]] [--force]
+#   vv-release [VERSION] [--iso PATH] [--add FILE]... [--sign [--key FINGERPRINT]] [--force]
 #
 # 1. refuses to continue if the chroot still holds anything personal (see GATES below)
 # 2. writes release/VERSION/: the ISO, SHA256SUMS (+ signature with --sign), sbom.cdx.json (CycloneDX),
 #    PACKAGES.txt, SOURCES.txt, grub.cfg.txt (the exact boot options) and BUILD-INFO.txt
+#    --add FILE: one more file to publish with the ISO (for example a .deb), copied there and listed in SHA256SUMS
 #
 # Run it as your normal user (gpg must use YOUR key). It asks for sudo only to read root-only files.
 # Variables: VV_CHROOT, VV_OUT (ISO folder), VV_REL (release folder), VV_REPO_URL (printed in SOURCES.txt),
@@ -19,11 +20,12 @@ CH="$(realpath -m "$CH")"
 OUT="${VV_OUT:-$HERE/iso-out}"
 REL="${VV_REL:-$HERE/release}"
 REPO_URL="${VV_REPO_URL:-https://github.com/linuxtuts-website/vaevictis-os}"
-VER=""; ISO=""; SIGN=0; FORCE=0; KEY="${VV_SIGN_KEY:-}"
+VER=""; ISO=""; SIGN=0; FORCE=0; KEY="${VV_SIGN_KEY:-}"; ADD=()
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --iso)   ISO="$2"; shift 2 ;;
+        --add)   [ -f "${2:-}" ] || { echo "--add: no such file: ${2:-}" >&2; exit 2; }; ADD+=("$2"); shift 2 ;;
         --sign)  SIGN=1; shift ;;
         --key)   KEY="$2"; shift 2 ;;
         --force) FORCE=1; shift ;;
@@ -83,7 +85,12 @@ echo "[1/5] ISO -> $DEST/$NAME"
 ln -f "$ISO" "$DEST/$NAME" 2>/dev/null || cp --reflink=auto "$ISO" "$DEST/$NAME"
 
 echo "[2/5] checksums"
-( cd "$DEST" && sha256sum "$NAME" > SHA256SUMS && cp SHA256SUMS "$NAME.sha256" )   # .sha256: the file earlier releases had
+( cd "$DEST" && sha256sum "$NAME" > "$NAME.sha256" )     # .sha256: the file earlier releases had
+extra=()
+for f in "${ADD[@]}"; do
+    b="$(basename "$f")"; cp -f "$f" "$DEST/$b"; extra+=("$b"); echo "      + $b"
+done
+( cd "$DEST" && sha256sum "$NAME" "${extra[@]}" > SHA256SUMS )
 if [ "$SIGN" = 1 ]; then
     command -v gpg >/dev/null || die "gpg not found"
     if [ -z "$KEY" ]; then

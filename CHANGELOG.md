@@ -1,11 +1,31 @@
 # Changelog
 
-## 2026-10-18: fixes for the 1.1 apps (`vaevictis-tools` 1.3.0, `vaevictis-aurora` 1.1.3)
+## 1.2 (2026-10-18): the final version
+
+1.2 is meant to be the last release: after it, maintenance mode only (Debian's updates, best-effort fixes of VaeVictis's own
+code if something serious is found).
+
+- **The VaeVictis APT repository is closed.** A repository that installs software as root on other people's computers is a
+  responsibility a one-person hobby project cannot carry: a lost or stolen signing key, or a forgotten monthly re-signature,
+  would affect every user. 1.2 has no repository configured; updates come from Debian only. Why and how:
+  [docs/APT-REPOSITORY.md](docs/APT-REPOSITORY.md).
+- **Systems installed from 1.1:** the last fixes are files in the [1.2 release](https://github.com/linuxtuts-website/vaevictis-os/releases/tag/v1.2) (`vaevictis-tools` 1.3.0,
+  `vaevictis-aurora` 1.1.3, and `vaevictis-archive-keyring` 2026.10.18, which removes the repository): one command, see
+  [docs/UPDATING.md](docs/UPDATING.md).
+- **VaeVictis PDF removed:** Debian's own PDF viewer is there, maintained with Debian's security updates. Less code of our
+  own, written by AI and never audited.
+- **NVIDIA driver launcher** in the menu and on the desktop: it shows the graphics cards, then installs the optional
+  proprietary driver or undoes it (`vv-nvidia`, as before).
+- **Welcome window:** a line saying it is a hobby project written by AI, never audited, without warranty and not designed for
+  high-risk use; no promises in the VPN and login texts; no PDF Tool.
+- Everything below (fixes for the apps) and in the 2026-10-17 entry is in the 1.2 image.
+
+### Fixes for the apps (in 1.2; for 1.1: `vaevictis-tools` 1.3.0, `vaevictis-aurora` 1.1.3)
 
 Fixes found with an AI-assisted review of the three programs that open files from anywhere (Argon by Google), each one
 checked against the code and with a test where possible. This is **not an independent security audit**. The review found
 no way out of the sandbox; what it found are crashes, lost settings and writes that could follow a link, inside what the
-sandbox already allows. `sudo apt update && sudo apt full-upgrade` installs them.
+sandbox already allows.
 
 - **Aurora:** a file that declares an impossible duration (huge, infinite, not a number) is stored with no duration (in 1.1
   it crashed the player at every start, until the library was deleted; a library that already holds one opens again); notifications use the icon from the system theme,
@@ -21,8 +41,8 @@ sandbox already allows. `sudo apt update && sudo apt full-upgrade` installs them
 - **All three, and `vv-sandbox`:** the commands they run are taken only from the system folders.
 - **Aurora, VaeVictis PDF:** the window has its close button again (in 1.1 it could be closed only from the menu).
 - **VPN manager:** the server list is readable (light text on a white background in 1.1).
-- **Packages:** `vaevictis-tools` 1.3.0 now also carries VaeVictis PDF and LinPaint+ (same rule: a copy is replaced only if
-  it is exactly a version VaeVictis shipped); `vaevictis-aurora` 1.1.3.
+- **Packages (for 1.1):** `vaevictis-tools` 1.3.0 now also carries VaeVictis PDF and LinPaint+ (same rule: a copy is
+  replaced only if it is exactly a version VaeVictis shipped); `vaevictis-aurora` 1.1.3.
 
 ## 2026-10-17: fixes for 1.1 (package `vaevictis-tools` 1.2.0; the next ISO will include them)
 

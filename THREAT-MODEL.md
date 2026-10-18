@@ -17,7 +17,7 @@ updates, no telemetry, and a few honest tools (VPN, password manager, snapshots)
 |---|---|
 | Remote attackers scanning the internet | Nothing listens by default; incoming traffic is dropped; SSH off (and hardened + fail2ban if you turn it on) |
 | Your laptop is lost or stolen while powered off | LUKS2 on root and `/home`, encrypted swap, if you chose encryption in the installer |
-| A malicious PDF, song or image | Aurora, LinPaint+ and VaeVictis PDF run in a sandbox: no network, system and home read-only except the data folders, keys and browser profiles hidden, D-Bus filtered |
+| A malicious song or image | Aurora and LinPaint+ run in a sandbox: no network, system and home read-only except the data folders, keys and browser profiles hidden, D-Bus filtered. PDFs open in Debian's viewer, outside this sandbox |
 | Someone at the keyboard changing the start options to skip the login | GRUB password: starting needs none, editing the entries or the GRUB console does |
 | Memory-corruption exploitation | `init_on_alloc`/`init_on_free`, `slab_nomerge`, `randomize_kstack_offset`, `vsyscall=none`, restricted `dmesg`, BPF, ptrace, kernel pointers |
 | Network snooping on public Wi-Fi | WireGuard VPN manager; its kill switch is designed to block everything outside the tunnel, also for virtual machines and during a reconnect (you must trust the VPN provider) |
@@ -53,9 +53,8 @@ an intrusion after the fact.
 - The VaeVictis scripts in this repository (small, readable, GPL) and the way the ISO was built: verify your download with the
   published SHA-256 and GPG signature, and compare the package list (`PACKAGES.txt`, SBOM) published with each release.
 - Your VPN provider, if you use one.
-- The VaeVictis APT repository (preconfigured from 1.1): its signing key and the maintainer's GitHub and Cloudflare accounts,
-  protected by two-factor login. A pin limits it to packages named `vaevictis-*`; see [docs/APT-REPOSITORY.md](docs/APT-REPOSITORY.md)
-  for what happens if the key or an account is compromised.
+- Nothing of a VaeVictis APT repository: it was closed with 1.2 ([docs/APT-REPOSITORY.md](docs/APT-REPOSITORY.md)). Systems
+  installed from 1.1 trust it until they remove it ([docs/UPDATING.md](docs/UPDATING.md)).
 
 ## Defaults that are public on purpose
 

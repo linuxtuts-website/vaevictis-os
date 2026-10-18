@@ -59,7 +59,7 @@ Check: `systemctl status sysctl-helper` answers "could not be found".
 
 ## 3. The VaeVictis APT repository
 
-So that VaeVictis programs update with `apt`: [UPDATING.md, "On 1.0 / 1.0.1"](UPDATING.md#on-10--101-add-it-yourself).
+It was closed with 1.2. If you added it by hand, remove it: [UPDATING.md](UPDATING.md#on-10--101-if-you-added-the-repository-by-hand).
 
 ## 4. Two kernel settings of 1.1
 
@@ -76,15 +76,15 @@ It prints `0` and `2`.
 
 ## 5. What needs a new installation
 
-These are part of the image or of the installer, so they come only with the 1.1 ISO:
+These are part of the image or of the installer, so they come only with a new installation (today: the 1.2 ISO):
 
 - the boot menu password (GRUB) and the new boot screens;
-- the sandbox for Aurora, LinPaint+ and VaeVictis PDF;
+- the sandbox for Aurora and LinPaint+;
 - the VPN with least privileges and the stronger kill switch (designed to also block virtual machines and to stay closed during a
   reconnect);
 - v-snap only on encrypted disks, with the kernels in `/boot`;
 - the mount options of `/boot`, the EFI partition and `/home`;
-- the APT repository already configured.
+- the fixes of October 2026 (1.2).
 
 If you reinstall: copy your files to an **encrypted** disk first (your home folder, VPN configuration files, KeePassXC database),
-check that the copy opens, then install from the 1.1 ISO. Your VPN files are imported again with the VPN manager.
+check that the copy opens, then install from the 1.2 ISO. Your VPN files are imported again with the VPN manager.

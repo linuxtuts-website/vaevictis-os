@@ -15,7 +15,7 @@ Run on any Linux machine as root (they use network namespaces and never touch th
 wg-quick itself and its systemd sandbox, and the three programs on a real Wayland desktop with sound, need a real
 system: see the test list in the release kit.
 
-## APT repository (done for 1.1, not scripted here)
+## APT repository (done for 1.1, not scripted here; the repository was closed with 1.2)
 
 `build/vv-apt-publish` was run with a throwaway key on a copy of `vaevictis-apt`: it added 1.1.1, re-signed with
 `Valid-Until`, refused a different file under the same version and a package not named `vaevictis-*`. Then Debian 13's apt,

@@ -1,65 +1,49 @@
-# The VaeVictis APT repository: how it is protected
+# The VaeVictis APT repository: closed
 
-<https://apt.linuxtuts.online/> (files: [`vaevictis-apt`](https://github.com/linuxtuts-website/vaevictis-apt)) delivers the
-VaeVictis programs as Debian packages. From release 1.1 the image trusts it by default, through the package
-`vaevictis-archive-keyring`. Whoever can publish there can run code as root on every VaeVictis system that updates, so the
-rules below are not optional.
+From October 2026 VaeVictis had a signed APT repository, <https://apt.linuxtuts.online/> (files:
+[`vaevictis-apt`](https://github.com/linuxtuts-website/vaevictis-apt)), trusted by default by the 1.1 image through the package
+`vaevictis-archive-keyring`. **It was closed with release 1.2.**
 
-## What protects users
+## Why
 
-| Protection | What it does |
-|---|---|
-| Signed index | `InRelease` / `Release.gpg` are signed by the archive key. `apt` refuses anything else. |
-| Key used only for this source | `Signed-By: /usr/share/keyrings/vaevictis-archive-keyring.gpg`: the key is valid for this repository only, never for Debian's. |
-| Pin to `vaevictis-*` | `/etc/apt/preferences.d/vaevictis`: from this site only packages named `vaevictis-*` can be installed. A "newer" copy of a Debian package offered by it gets priority -1 and is never chosen. |
-| Expiry date | The signed index carries `Valid-Until` (30 days). An old signed index cannot be served for long to hide a fixed package: after the date `apt` reports the repository as expired and ignores it. |
-| Never replaced | `vv-apt-publish` refuses a different file under an already published name and version: a fix is always a new version. |
-| Offline release check | `vv-release` signs `SHA256SUMS` with one named key and checks it with the exported public key alone. |
+A repository that installs software as root on other people's computers is a responsibility a one-person hobby project cannot
+carry:
 
-Not automatic: VaeVictis packages are updated by `apt upgrade` (or GNOME Software), not by unattended-upgrades, which
-installs only Debian security updates.
+- whoever holds the signing key can run code as root on every system that updates from it. The key was kept offline on an
+  encrypted disk, but it was used on the maintainer's own computer to sign, and the packages were built there: a compromised
+  computer, a lost or stolen key, or a stolen GitHub or Cloudflare account would have reached every user;
+- the index had to be re-signed at least every 30 days (it carried an expiry date, so that an old index could not hide a fix);
+  a re-signature forgotten once means an error at every `apt update` on every system;
+- in maintenance mode there is almost nothing to publish, and everything else updates from Debian anyway.
 
-## Requirements for the maintainer (before every publication)
+Less to trust is better: 1.2 has no repository of its own, and a fix, if one is ever needed, is a file in a release, checked with
+the signed `SHA256SUMS` of that release.
 
-1. **Two-factor login** on the GitHub account and on the Cloudflare account (DNS of `linuxtuts.online`). Without it,
-   `vv-apps --apt-repo` must not be used: a stolen password would be enough to change the site or the DNS.
-2. **The secret key** stays on the maintainer's computer, protected by a passphrase, never in the repository, in GitHub
-   secrets or in CI. Best: the primary key (certification only) offline on a USB stick, only the signing subkey on the PC.
-3. **A revocation certificate** made once and kept offline: `gpg --output revoke-vaevictis.asc --gen-revoke 0A41158C1DD6718D3D3FFED068486B39B2A99993`
-   (gpg also keeps one in `~/.gnupg/openpgp-revocs.d/`: copy it to the offline stick too).
+## What was done
 
-## Publishing and re-signing
+1. No more publications. The last signed index is not renewed: it expires on **2026-11-16** and apt then reports the repository as
+   expired (Debian's updates are not affected).
+2. The last fixes for 1.1 are published as files of the [1.2 release](https://github.com/linuxtuts-website/vaevictis-os/releases/tag/v1.2),
+   with the last `vaevictis-archive-keyring` (2026.10.18): it removes the source entry, the pin and the key from the system
+   (`dpkg-maintscript-helper rm_conffile`; a copy changed locally is kept as `.dpkg-bak`, which apt ignores). How to install them:
+   [UPDATING.md](UPDATING.md).
+3. After 1.2 is out, the DNS record `apt.linuxtuts.online` is deleted **first**, and only then GitHub Pages is switched off for
+   `vaevictis-apt` (in the other order somebody else could serve files under that name). The `vaevictis-apt` repository is
+   archived, not deleted, so its history stays readable.
 
-```
-packaging/aurora/build.sh                       # or packaging/tools/build.sh: the package you changed
-build/vv-apt-publish --repo ~/vaevictis-apt --key 0A41158C1DD6718D3D3FFED068486B39B2A99993 dist/vaevictis-aurora_X_all.deb
-git -C ~/vaevictis-apt status                   # check, then commit and push yourself
-```
+A system installed from 1.1 that never installs the last packages keeps trusting the key for that name only; once the name is
+gone there is nothing left to download from it, and `sudo apt purge vaevictis-archive-keyring` removes it (not `remove`: it
+would leave the source entry without its key, and `apt update` would report an error).
 
-**Re-sign before `Valid-Until`** (the script prints the date): the same command **without packages**, then commit and push.
-If the date passes, systems show "Release file ... is expired" for this repository only; Debian's updates keep working,
-and everything is fine again at the next re-signing.
+## The key
 
-## Dates to remember
+`0A41 158C 1DD6 718D 3D3F  FED0 6848 6B39 B2A9 9993` still signs the checksums of the releases (`SHA256SUMS.asc`). Its signing
+subkey `AEAB52A05F132CF78D85364486DF1E428F666F06` expires on 2028-10-09 (the primary key on 2031-10-09). If it were ever lost or
+stolen: revoke it (`gpg --import` of the revocation certificate kept offline, then publish the revoked public key), announce it
+on the site and on GitHub, and sign the next release with a new key published through several channels.
 
-| When | What |
-|---|---|
-| every < 30 days | re-sign the index (`vv-apt-publish` without packages) |
-| before 2028-10-09 | the signing subkey `AEAB52A05F132CF78D85364486DF1E428F666F06` expires: extend it (`gpg --quick-set-expire 0A41158C1DD6718D3D3FFED068486B39B2A99993 2y AEAB52A05F132CF78D85364486DF1E428F666F06`), update `packaging/archive-keyring/vaevictis-archive-keyring.asc` and the repository's `vaevictis-archive-keyring.gpg`/`.asc`, publish a new `vaevictis-archive-keyring` version (it reaches every system with the next update), **then** sign with the extended key |
-| before 2031-10-09 | the primary key expires: extend it the same way |
+## How it was protected (1.1, for the record)
 
-## If the key, the GitHub account or the Cloudflare account may be compromised
-
-1. **Stop publishing.** Do not push anything to `vaevictis-apt` until it is clear what happened.
-2. **Tell users at once** (GitHub Security Advisory on `vaevictis-os`, the site, the README of `vaevictis-apt`), with the
-   one command that stops trusting the repository: `sudo apt purge vaevictis-archive-keyring` (1.1 and later), or, on a
-   system where it was added by hand: `sudo rm /etc/apt/sources.list.d/vaevictis.sources /etc/apt/keyrings/vaevictis.gpg`.
-3. **Secure the accounts**: change the passwords, check the two-factor settings, the SSH and deploy keys, the personal access
-   tokens and the authorized applications of GitHub; the API tokens, members and DNS records of Cloudflare.
-4. **Revoke the key**: import the revocation certificate (`gpg --import revoke-vaevictis.asc`) and publish the revoked public
-   key in place of the old one. `apt` does not ask keyservers: revocation only reaches systems through step 2 and step 5.
-5. **New key**: create it, put its fingerprint in `vv-apt-publish`, `packaging/archive-keyring/build.sh` and this document,
-   publish it through several channels (site, GitHub, README), and tell users how to install the new
-   `vaevictis-archive-keyring` by hand after checking its SHA-256 against those channels.
-6. **Check what was published** while the key was not safe: every package version in `pool/` against the GitHub release
-   assets and their SHA-256; anything that does not match is announced in the advisory.
+The index was signed and expired after 30 days; the key was valid for this source only (`Signed-By`); a pin let it provide only
+packages named `vaevictis-*`; a published version was never replaced (`build/vv-apt-publish`, still in the repository); the
+GitHub and Cloudflare accounts used two-factor login. None of this removed the risks above: it made them smaller.

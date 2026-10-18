@@ -16,7 +16,7 @@ licence already says, and adds what you should know before you use it.
   which a project with no income cannot pay. It was only reviewed with AI tools (Lumo 2.0 Max by Proton and Argon by Google,
   October 2026), which miss problems: it may contain bugs and security holes that nobody has found yet.
 - **No guarantees.** Provided as is, without warranty of any kind. Do not rely on it where your safety, your freedom or your
-  money are at stake: use Tails or Qubes OS instead. You use VaeVictis at your own risk.
+  money are at stake: it is not designed for high-risk use. You use VaeVictis at your own risk.
 
 ## No warranty
 
@@ -44,8 +44,8 @@ and 17). Nothing on this page limits a liability that the law does not allow to 
 ## Not for critical use
 
 Do not rely on VaeVictis OS where a failure could put people at risk, or cause serious financial or legal harm: for example
-if you are a journalist, an activist or a source facing a capable adversary. For those cases use systems built and reviewed
-for them, such as Tails or Qubes OS, and get expert advice.
+if you are a journalist, an activist or a source facing a capable adversary. It is not designed or reviewed for those cases:
+get expert advice.
 
 ## Your responsibility
 
@@ -90,7 +90,7 @@ originale inglese.
   strumenti di intelligenza artificiale (Lumo 2.0 Max di Proton e Argon di Google, ottobre 2026), che non trovano tutto: può
   contenere errori e falle di sicurezza che nessuno ha ancora trovato.
 - **Nessuna garanzia.** Fornito così com'è, senza garanzie di alcun tipo. Non affidarti a VaeVictis dove sono in gioco la tua
-  sicurezza, la tua libertà o il tuo denaro: usa invece Tails o Qubes OS. Lo usi a tuo rischio.
+  sicurezza, la tua libertà o il tuo denaro: non è progettato per usi ad alto rischio. Lo usi a tuo rischio.
 
 - **Nessuna garanzia.** VaeVictis OS è fornito **"così com'è", senza garanzie di alcun tipo**, esplicite o implicite, comprese
   quelle di commerciabilità e di idoneità a uno scopo particolare (GPL-3.0, sezione 15). Tutto il rischio sulla qualità e sul
@@ -105,8 +105,8 @@ originale inglese.
   intelligenza artificiale. I limiti e le debolezze note sono descritti in THREAT-MODEL.md, nel changelog, negli avvisi di
   sicurezza e in docs/FROM-1.0.md; possono esisterne altre non note.
 - **Non per usi critici.** Non affidarti a VaeVictis OS se un malfunzionamento può mettere a rischio persone o causare danni
-  economici o legali seri (per esempio giornalisti, attivisti o fonti esposte ad avversari capaci): usa sistemi costruiti e
-  verificati per quello, come Tails o Qubes OS, e chiedi il parere di esperti.
+  economici o legali seri (per esempio giornalisti, attivisti o fonti esposte ad avversari capaci): non è progettato né
+  verificato per questi casi; chiedi il parere di esperti.
 - **Responsabilità di chi lo usa.** Verifica il file scaricato (checksum e firma), fai un backup dei dati (l'installer cancella
   il disco o le partizioni scelte; una passphrase dimenticata non si recupera), provalo prima dalla chiavetta o in una macchina
   virtuale, tieni il sistema aggiornato. Decidi tu se è adatto alle tue esigenze e lo usi a tuo rischio.
