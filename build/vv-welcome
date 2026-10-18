@@ -196,7 +196,7 @@ def checks():
                   "The login screen lets someone in WITHOUT a password (" + ", ".join(al) + "). Put a # before those lines in "
                   "/etc/gdm3/daemon.conf and /etc/gdm3/custom.conf and restart."))
     else:
-        c.append(("Automatic login", "off", "ok", "Nobody gets in without typing a password."))
+        c.append(("Automatic login", "off", "ok", "The login screen asks for a password."))
 
     ports, temp = listening()
     expected = {f"tcp/{port}", "udp/68"}
@@ -252,6 +252,8 @@ class Welcome(Gtk.Window):
         root.pack_start(lab("VAEVICTIS OS", "brand"), False, False, 0)
         root.pack_start(lab("Hardened live environment" if "boot=live" in (rd("/proc/cmdline", "") or "") else "Hardened desktop", "title"), False, False, 0)
         root.pack_start(lab(f"Kernel {platform.release()}  \u00b7  Debian 13  \u00b7  Stateless. Stealth. Brutal.", "sub"), False, False, 0)
+        root.pack_start(lab("A hobby project, written by AI and never audited: provided as is, without warranty. "
+                            "Not designed for high-risk use. Details: vaevictisos.org/disclaimer", "dim", wrap=True), False, False, 0)
 
         self.nb = Gtk.Notebook()
         root.pack_start(self.nb, True, True, 6)
@@ -312,8 +314,8 @@ class Welcome(Gtk.Window):
         box.pack_start(lab("sudo fail2ban-client status sshd", "code", selectable=True), False, False, 0)
         box.pack_start(lab("VPN", "h"), False, False, 6)
         box.pack_start(lab(
-            "WireGuard, managed by VaeVictis VPN. With the kill switch on, nothing leaves this PC or its virtual machines "
-            "outside the tunnel, also while it reconnects; it lasts until you disconnect, release it or restart.", "dim", wrap=True), False, False, 0)
+            "WireGuard, managed by VaeVictis VPN. The kill switch is set to block what would leave this PC or its virtual "
+            "machines outside the tunnel, also while it reconnects; it lasts until you disconnect, release it or restart.", "dim", wrap=True), False, False, 0)
         return sw
 
     def _apps_page(self):
@@ -322,14 +324,16 @@ class Welcome(Gtk.Window):
             ("VPN", "WireGuard manager. IMPORT your provider's .conf file, then CONNECT. Privileged actions go through a small "
                     "checked helper (polkit, your password), never through the app itself; WireGuard itself runs in a sandbox "
                     "that can only configure the network. Configs with commands (PostUp...) are refused."),
-            ("Aurora", "Offline, privacy-focused audio player. No network access."),
+            ("Aurora", "Offline audio player. It runs in a sandbox with no network access."),
             ("Linpaint", "Dark MS-Paint-style editor: pencil, brush, spray, eraser, fill, picker, text and shapes. "
                          "Takes screenshots (full screen or area, with a delay) and opens them for editing."),
-            ("PDF Tool", "View and edit PDFs locally (Ctrl+T to insert text). Nothing is uploaded anywhere."),
             ("Snap", "Incremental snapshots with hardlinks (rsync) for ext4, xfs and btrfs: system snapshot (with the kernels, "
                      "without /home), folder backup, list, delete and restore. Run 'sudo v-snap'. Installed systems only. "
                      "On the system disk it protects from a bad update; on an external disk also from a dead disk. "
                      "Snapshots hold the system's secrets, so an external disk must be encrypted (LUKS)."),
+            ("NVIDIA driver", "Optional: replaces the open driver (nouveau) with NVIDIA's proprietary one, on an installed system "
+                              "with network and Secure Boot off. It shows your cards first, asks before changing anything, "
+                              "and 'undo' goes back. Launcher on the desktop, or: sudo vv-nvidia"),
             ("Panic", "Cuts the network, flushes the disks and powers off at once (needs no password, asks nothing twice). "
                       "It is not a secure erase: RAM fades after power-off, it is not wiped."),
             ("KeePassXC", "Offline password manager. Your database is a single encrypted file; nothing is synced anywhere."),

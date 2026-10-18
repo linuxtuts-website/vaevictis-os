@@ -71,10 +71,13 @@ mk_icon vv-install <<'EOF'
     <path d="M32 96 H96" stroke="#e2e2e5"/>
   </g>
 EOF
-mk_icon vv-pdf <<'EOF'
-  <path d="M38 24 H74 L92 42 V104 H38 Z" fill="#15151a" stroke="#e2e2e5" stroke-width="4" stroke-linejoin="round"/>
-  <path d="M74 24 V42 H92" fill="none" stroke="#e2e2e5" stroke-width="4" stroke-linejoin="round"/>
-  <g stroke="url(#g)" stroke-width="6" stroke-linecap="round"><path d="M49 58 H81"/><path d="M49 71 H81"/><path d="M49 84 H68"/></g>
+mk_icon vv-nvidia <<'EOF'
+  <g fill="none" stroke-linejoin="round" stroke-linecap="round">
+    <rect x="22" y="40" width="84" height="46" rx="8" stroke="url(#g)" stroke-width="7"/>
+    <circle cx="52" cy="63" r="13" stroke="#e2e2e5" stroke-width="6"/>
+    <path d="M78 54 H94 M78 63 H94 M78 72 H94" stroke="#e2e2e5" stroke-width="5"/>
+    <path d="M34 86 V96 M46 86 V96 M58 86 V96 M70 86 V96" stroke="url(#g)" stroke-width="5"/>
+  </g>
 EOF
 mk_icon vv-snap <<'EOF'
   <g fill="none" stroke="url(#g)" stroke-width="8" stroke-linejoin="round" stroke-linecap="round">
@@ -95,6 +98,8 @@ mk_icon vv-panic <<'EOF'
   <path d="M64 42 V68" stroke="#ff5d5d" stroke-width="10" stroke-linecap="round"/><circle cx="64" cy="84" r="6" fill="#ff5d5d"/>
 EOF
 echo "== icons: 8 SVG files in /usr/share/icons/hicolor/scalable/apps"
+# VaeVictis PDF is gone from 1.2 (Debian's PDF viewer is installed): no icon of a program that is not there
+if [ -e "$ICONDIR/vv-pdf.svg" ]; then rm -f "$ICONDIR/vv-pdf.svg" && echo "  removed /usr/share/icons/hicolor/scalable/apps/vv-pdf.svg"; fi
 
 # The XML editor (vv-xml) is gone from the image: LibreOffice is installed. Remove what an earlier build left behind,
 # so the ISO has no launcher, icon or colour scheme of a program that is not there.
@@ -124,11 +129,11 @@ done
 # ------------------------------------------------------------------ 2. .desktop files
 declare -A MAP=(
     [aurora]=vv-aurora          [linpaint]=vv-linpaint     [vaevictis_install]=vv-install
-    [install-vaevictis]=vv-install  [vv-pdf]=vv-pdf
+    [install-vaevictis]=vv-install  [vv-nvidia]=vv-nvidia
     [v-snap]=vv-snap            [vv-welcome]=vv-welcome    [vv-panic]=vv-panic   [vv-vpn]=vv-vpn
 )
 declare -A NAMEMAP=(
-    ['^Name=.*vaevictis.*snap']=vv-snap    ['^Name=.*vaevictis.*pdf']=vv-pdf
+    ['^Name=.*vaevictis.*snap']=vv-snap
     ['^Name=.*vaevictis.*vpn']=vv-vpn      ['^Name=.*vaevictis.*install']=vv-install  ['^Name=.*vaevictis.*panic']=vv-panic
     ['^Name=aurora']=vv-aurora             ['^Name=lin ?paint']=vv-linpaint
 )
@@ -280,8 +285,8 @@ bak "$CH/usr/lib/os-release"
 cat > "$CH/usr/lib/os-release" <<EOF
 PRETTY_NAME="VaeVictis OS"
 NAME="VaeVictis OS"
-VERSION_ID="1.1"
-VERSION="1.1 (Hardened)"
+VERSION_ID="1.2"
+VERSION="1.2 (Hardened)"
 VERSION_CODENAME=trixie
 ID=$OS_ID
 ID_LIKE=debian

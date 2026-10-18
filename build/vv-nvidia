@@ -4,6 +4,7 @@
 #   vv-nvidia            show the graphics cards, the driver in use and what is installed (changes nothing)
 #   vv-nvidia install    install the proprietary driver (shows the plan, asks for YES)
 #   vv-nvidia undo       remove it and go back to nouveau
+#   vv-nvidia menu       what the desktop launcher runs: the status, then asks install / undo / nothing
 #
 # Why optional: the NVIDIA driver is closed source. VaeVictis ships the open driver (nouveau) so the default system has
 # no proprietary code in it. On recent cards nouveau is often slow in games and heavy applications: this script is for
@@ -217,10 +218,25 @@ cmd_undo() {
     echo "Done. RESTART: the open driver (nouveau) comes back. The kernel headers stay installed (harmless)."
 }
 
+cmd_menu() {   # the launcher's terminal closes when the program ends: show, ask once, wait for Enter
+    cmd_status
+    echo
+    local a=""
+    read -r -p "Type install or undo and press Enter (only Enter: close): " a || true
+    case "$a" in
+        install|undo) "$0" "$a" || true ;;          # asks for your password (sudo)
+        "") ;;
+        *) echo "Unknown choice: $a (nothing done)" ;;
+    esac
+    echo
+    read -r -p "[Press Enter to close]" _ || true
+}
+
 case "${1:-status}" in
     status|--status|check) cmd_status ;;
+    menu)                  cmd_menu ;;
     install)               cmd_install ;;
     undo|remove)           cmd_undo ;;
     -h|--help|help)        sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
-    *) die "unknown command: $1  (use: status | install | undo)" ;;
+    *) die "unknown command: $1  (use: status | install | undo | menu)" ;;
 esac

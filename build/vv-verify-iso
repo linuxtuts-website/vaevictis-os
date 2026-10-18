@@ -86,7 +86,6 @@ usr/local/bin/vv-welcome vv-welcome
 usr/local/bin/vv-panic vv-panic
 usr/local/libexec/vv-panic-action vv-panic-action
 usr/local/libexec/vv-sandbox vv-sandbox
-usr/local/lib/vaevictis/vv-pdf vv-pdf.py
 usr/local/lib/vaevictis/linpaint linpaint.py
 usr/bin/aurora aurora
 usr/share/vaevictis/grub-theme/theme.txt boot/grub-theme.txt
@@ -110,7 +109,7 @@ cat_of usr/local/bin/vaevictis_install.sh | grep -q 'systemd-cryptsetup' && ok "
 cat_of usr/local/bin/vaevictis_install.sh | grep -q 'EFI_BEFORE' && ok "installer saves the firmware boot list" || bad "installer lacks the firmware boot list check"
 cat_of usr/local/bin/vaevictis_install.sh | grep -q 'sudo_on_live' && ok "installer removes the live polkit rule" || bad "installer keeps the live polkit rule (root without password for 'user')"
 cat_of usr/local/bin/vaevictis_install.sh | grep -qE '^for g in .*libvirt' && bad "installer adds the user to libvirt (root without password)" || ok "installer does not add the user to libvirt"
-for w in vv-pdf linpaint aurora; do
+for w in linpaint aurora; do
     cat_of "usr/local/bin/$w" | grep -q 'exec /usr/local/libexec/vv-sandbox' && ok "$w always starts in its sandbox" \
         || bad "/usr/local/bin/$w does not start the sandbox (run vv-apps)"
 done
@@ -133,14 +132,31 @@ cat_of etc/dconf/db/vaevictis.d/90-wallpaper-vaevictis | grep -qx "picture-uri='
     || bad "wallpaper default missing or dconf database not updated (run vv-boot-theme)"
 cat_of etc/plymouth/plymouthd.conf | grep -qx 'Theme=vaevictis' && ok "Plymouth default theme: vaevictis" || bad "Plymouth theme is not vaevictis (run vv-boot-theme)"
 grep_os="$(cat_of usr/lib/os-release)"
-printf '%s\n' "$grep_os" | grep -qx 'VERSION_ID="1.1"' && printf '%s\n' "$grep_os" | grep -q '^HOME_URL="https://vaevictisos.org"' \
-    && ok "os-release: 1.1, vaevictisos.org" || bad "os-release is not 1.1 / vaevictisos.org (run vv-branding)"
-if exists etc/apt/sources.list.d/vaevictis.sources; then
-    pkg_ok vaevictis-archive-keyring && cat_of etc/apt/preferences.d/vaevictis | grep -q 'Pin-Priority: -1' \
-        && ok "APT repository preconfigured with the pin (only vaevictis-*)" || bad "APT repository configured WITHOUT the keyring package or the pin"
-else
-    echo "  (APT repository not preconfigured: vv-apps without --apt-repo)"
-fi
+printf '%s\n' "$grep_os" | grep -qx 'VERSION_ID="1.2"' && printf '%s\n' "$grep_os" | grep -q '^HOME_URL="https://vaevictisos.org"' \
+    && ok "os-release: 1.2, vaevictisos.org" || bad "os-release is not 1.2 / vaevictisos.org (run vv-branding)"
+# 1.2: the VaeVictis APT repository is closed: nothing of it may be in the image
+aptleft=""
+for f in etc/apt/sources.list.d/vaevictis.sources etc/apt/preferences.d/vaevictis etc/apt/keyrings/vaevictis.gpg \
+         usr/share/keyrings/vaevictis-archive-keyring.gpg; do
+    exists "$f" && aptleft="$aptleft /$f"
+done
+for f in $(grep -o 'squashfs-root/etc/apt/sources\.list\.d/[^ ]*$' "$W/list" | sed 's|^squashfs-root/||'); do
+    cat_of "$f" | grep -q 'linuxtuts' && aptleft="$aptleft /$f"
+done
+pkg_ok vaevictis-archive-keyring && aptleft="$aptleft (package vaevictis-archive-keyring)"
+[ -z "$aptleft" ] && ok "no VaeVictis APT repository (closed): updates from Debian only" \
+    || bad "the closed APT repository is still configured (run vv-apps):$aptleft"
+pdfleft=""
+for f in usr/local/bin/vv-pdf usr/local/lib/vaevictis/vv-pdf usr/share/applications/vv-pdf.desktop \
+         usr/share/icons/hicolor/scalable/apps/vv-pdf.svg; do
+    exists "$f" && pdfleft="$pdfleft /$f"
+done
+[ -z "$pdfleft" ] && ok "VaeVictis PDF removed (1.2)" || bad "VaeVictis PDF still in the image (run vv-apps, vv-branding):$pdfleft"
+{ pkg_ok papers || pkg_ok evince; } && ok "a PDF viewer from Debian is installed (papers or evince)" \
+    || bad "no PDF viewer: install papers in the chroot (./vv-chroot run apt-get install papers)"
+for f in usr/share/applications/vv-nvidia.desktop etc/skel/Desktop/vv-nvidia.desktop; do
+    cat_of "$f" | grep -qx 'Exec=/usr/local/sbin/vv-nvidia menu' && ok "NVIDIA driver launcher: /$f" || bad "/$f missing (run vv-apps)"
+done
 hidsleft=""
 for f in usr/libexec/systemd-sysctl-helper etc/systemd/system/sysctl-helper.service usr/local/bin/hids-gui \
          usr/local/bin/hids-notify etc/xdg/autostart/hids-notify.desktop usr/share/applications/hids-security.desktop; do

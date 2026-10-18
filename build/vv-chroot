@@ -308,6 +308,7 @@ cmd_pkgcheck() {
         "libreoffice-gtk3|native look on GNOME and Wayland"
         "libreoffice-style-colibre|icons"
         "hunspell-en-us|spell checking"
+        "evince|PDF viewer (Debian's; VaeVictis PDF is gone from 1.2)"
         "## Audio and video"
         "pipewire-audio|sound: PipeWire, WirePlumber, PulseAudio compatibility"
         "alsa-ucm-conf|sound routing on modern laptops"
@@ -342,7 +343,7 @@ cmd_pkgcheck() {
         "gvfs-backends|phones (MTP) and network shares"
         "## Desktop integration"
         "xdg-desktop-portal-gnome|screenshots and file dialogs (Linpaint)"
-        "qt6-wayland|Qt6 apps (Aurora, PDF Tool) as native Wayland windows: sharp, no XWayland fallback"
+        "qt6-wayland|Qt6 apps (Aurora) as native Wayland windows: sharp, no XWayland fallback"
         "gnome-shell-extensions|official GNOME extensions; contains drive-menu: the top-bar eject button for USB sticks and disks"
         "libgdk-pixbuf2.0-bin|image thumbnails in Files (without it Files shows no previews of pictures)"
         "gnome-shell-extension-dashtodock|dock that also shows plugged-in USB sticks and disks"
@@ -364,7 +365,7 @@ cmd_pkgcheck() {
         "python3-tk|Linpaint"
         "python3-pil|Linpaint"
         "python3-pil.imagetk|Linpaint"
-        "python3-pyqt6|Aurora and PDF Tool"
+        "python3-pyqt6|Aurora"
         "python3-pyqt6.qtmultimedia|Aurora"
         "python3-mutagen|Aurora"
         "python3-gi|VPN, welcome window"
@@ -430,7 +431,6 @@ def try_import(*names):
     return False
 checks = [
     ("Aurora",   try_import("PyQt6.QtWidgets") and try_import("PyQt6.QtMultimedia") and try_import("mutagen")),
-    ("PDF Tool", try_import("PyQt6.QtWidgets") and try_import("pymupdf", "fitz")),
     ("Linpaint", try_import("tkinter") and try_import("PIL.ImageTk") and try_import("gi")),
     ("VPN, welcome window", try_import("gi")),
 ]

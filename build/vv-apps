@@ -2,17 +2,16 @@
 # vv-apps - installs VaeVictis's own programs into the chroot from the files of this repository, so that every one of
 # their files in the image comes from a script (nothing copied by hand):
 #
-#   Aurora (package vaevictis-aurora, built first with packaging/aurora/build.sh), VaeVictis PDF and LinPaint+:
-#     they open files that come from anywhere, so each one always starts in its sandbox (vv-sandbox: no network,
-#     system and home read-only except the data folders, secrets hidden, D-Bus filtered)
-#   v-snap, the VPN manager, the installer, and their launchers (menu, and desktop of new users)
+#   Aurora (package vaevictis-aurora, built first with packaging/aurora/build.sh) and LinPaint+: they open files that
+#     come from anywhere, so each one always starts in its sandbox (vv-sandbox: no network, system and home read-only
+#     except the data folders, secrets hidden, D-Bus filtered)
+#   v-snap, the VPN manager, the NVIDIA driver helper, the installer, and their launchers (menu, desktop of new users)
 #   apt: no recommended or suggested packages unless asked (/etc/apt/apt.conf.d/99-vaevictis-no-bloat)
-#   with --apt-repo: the VaeVictis APT repository, through the package vaevictis-archive-keyring (key, source entry,
-#     and a pin that lets it provide only vaevictis-* packages). Give --apt-repo ONLY when two-factor login is on for
-#     the GitHub account and the Cloudflare account; the script itself checks that the published index is signed and
-#     carries an expiry date (Valid-Until).
 #
-#   vv-apps [--apt-repo]   apply (safe to repeat; replaced files are backed up next to the chroot)
+# Removed in 1.2, also from a chroot that an earlier build used: VaeVictis PDF (Debian's own PDF viewer is there), and the
+# VaeVictis APT repository (closed in October 2026: updates come from Debian only).
+#
+#   vv-apps            apply (safe to repeat; replaced or removed files are backed up next to the chroot)
 #
 # Run it after vv-secure and vv-harden, before vv-branding (which gives the launchers their icons).
 set -euo pipefail
@@ -24,16 +23,18 @@ CH="$(realpath -m "$CH")"
 VVC="$HERE/vv-chroot"
 
 die() { echo "vv-apps: $*" >&2; exit 1; }
-APT_REPO=0
 for a in "$@"; do
-    case "$a" in --apt-repo) APT_REPO=1 ;; *) die "unknown option: $a (see the comment at the top)" ;; esac
+    case "$a" in
+        --apt-repo) die "the VaeVictis APT repository is closed (October 2026): build without --apt-repo" ;;
+        *) die "unknown option: $a (see the comment at the top)" ;;
+    esac
 done
 [ "$(id -u)" -eq 0 ] || exec sudo -E VV_CHROOT="$CH" "$0" "$@"
 [ -f "$CH/etc/debian_version" ] && [ "$CH" != "/" ] || die "not a Debian root filesystem: $CH"
 [ -x "$VVC" ] || die "vv-chroot must be next to this script ($VVC)"
 
-for f in vv-sandbox vv-pdf.py vv-pdf.desktop linpaint.py linpaint.desktop v-snap vaevictis_install.sh \
-         vaevictis_install.desktop vv-vpn vv-vpn-helper org.vaevictis.vpn.policy vv-vpn.desktop; do
+for f in vv-sandbox linpaint.py linpaint.desktop v-snap vaevictis_install.sh \
+         vaevictis_install.desktop vv-vpn vv-vpn-helper org.vaevictis.vpn.policy vv-vpn.desktop vv-nvidia; do
     [ -f "$HERE/$f" ] || die "missing next to this script: $f"
 done
 AURORA_VER=$(sed -n 's/^Version: //p' "$ROOT/packaging/aurora/control")
@@ -42,31 +43,14 @@ DEB="$ROOT/dist/vaevictis-aurora_${AURORA_VER}_all.deb"
 TOOLS_VER=$(sed -n 's/^Version: //p' "$ROOT/packaging/tools/control")
 TOOLSDEB="$ROOT/dist/vaevictis-tools_${TOOLS_VER}_all.deb"
 [ -f "$TOOLSDEB" ] || die "$TOOLSDEB not found: build it first with  packaging/tools/build.sh  (Aurora depends on it)"
-if [ "$APT_REPO" = 1 ]; then
-    KR_VER=$(sed -n 's/^Version: //p' "$ROOT/packaging/archive-keyring/control")
-    KRDEB="$ROOT/dist/vaevictis-archive-keyring_${KR_VER}_all.deb"
-    [ -f "$KRDEB" ] || die "$KRDEB not found: build it first with  packaging/archive-keyring/build.sh"
-    # the published index must be signed and must expire (Valid-Until)
-    idx=$(curl -fsS --max-time 20 https://apt.linuxtuts.online/dists/vaevictis/InRelease) \
-        || die "cannot read https://apt.linuxtuts.online/dists/vaevictis/InRelease (network?)"
-    printf '%s\n' "$idx" | grep -q '^-----BEGIN PGP SIGNED MESSAGE-----' || die "the published index is not signed"
-    # ... signed by the archive key (checked with nothing but the key in this repository) ...
-    vtmp=$(mktemp -d)
-    gpg --dearmor < "$ROOT/packaging/archive-keyring/vaevictis-archive-keyring.asc" > "$vtmp/k.gpg" 2>/dev/null
-    printf '%s\n' "$idx" > "$vtmp/InRelease"
-    gpgv --keyring "$vtmp/k.gpg" "$vtmp/InRelease" >/dev/null 2>&1 \
-        || { rm -rf "$vtmp"; die "the published index is NOT signed by the archive key: stop and check"; }
-    rm -rf "$vtmp"
-    # ... and it expires, not too soon
-    until=$(printf '%s\n' "$idx" | sed -n 's/^Valid-Until: //p' | head -n 1)
-    [ -n "$until" ] || die "the published index has no Valid-Until: publish it with vv-apt-publish first"
-    left=$(( ( $(date -d "$until" +%s) - $(date +%s) ) / 86400 ))
-    [ "$left" -ge 7 ] || die "the published index expires in $left day(s) ($until): re-sign it with vv-apt-publish first"
-    echo "  published index: signed by the archive key, valid until $until"
-fi
 
 BK="$(dirname "$CH")/vv-backups/$(date +%Y%m%d-%H%M%S)"
-bak() { local rel="${1#$CH/}"; [ -e "$1" ] || return 0; mkdir -p "$BK"; (cd "$CH" && cp -a --parents "$rel" "$BK/"); }
+bak() { local rel="${1#$CH/}"; [ -e "$1" ] || [ -L "$1" ] || return 0; mkdir -p "$BK"; (cd "$CH" && cp -a --parents "$rel" "$BK/"); }
+gone() {   # gone DEST-in-the-chroot...   (removed in 1.2; a copy is kept in the backup folder)
+    local f; for f in "$@"; do
+        if [ -e "$CH/$f" ] || [ -L "$CH/$f" ]; then bak "$CH/$f"; rm -f "$CH/$f"; echo "  removed /$f"; fi
+    done
+}
 inst() {   # inst MODE SOURCE DEST-in-the-chroot
     bak "$CH/$3"; install -D -m "$1" "$2" "$CH/$3"; echo "  /$3"
 }
@@ -108,13 +92,14 @@ Categories=AudioVideo;Audio;Player;
 Keywords=music;audio;player;spectrum;
 EOF
 
-echo "== VaeVictis PDF and LinPaint+"
-inst 0755 "$HERE/vv-pdf.py"   usr/local/lib/vaevictis/vv-pdf
+echo "== LinPaint+"
 inst 0755 "$HERE/linpaint.py" usr/local/lib/vaevictis/linpaint
-wrapper vv-pdf   vv-pdf   /usr/local/lib/vaevictis/vv-pdf   "VaeVictis PDF"
 wrapper linpaint linpaint /usr/local/lib/vaevictis/linpaint "LinPaint+"
-inst 0644 "$HERE/vv-pdf.desktop"   usr/share/applications/vv-pdf.desktop
 inst 0644 "$HERE/linpaint.desktop" usr/share/applications/linpaint.desktop
+
+echo "== VaeVictis PDF: removed in 1.2 (Debian's PDF viewer is installed)"
+gone usr/local/lib/vaevictis/vv-pdf usr/local/bin/vv-pdf usr/share/applications/vv-pdf.desktop \
+     usr/local/share/applications/vv-pdf.desktop etc/skel/Desktop/vv-pdf.desktop
 
 echo "== v-snap"
 inst 0755 "$HERE/v-snap" usr/local/bin/v-snap
@@ -141,8 +126,21 @@ inst 0755 "$HERE/vv-vpn.desktop"          etc/skel/Desktop/vv-vpn.desktop
 install -d -m 0755 "$CH/var/lib/vv-vpn"
 install -d -m 0700 "$CH/etc/wireguard"
 
-echo "== NVIDIA driver helper"
-[ -f "$HERE/vv-nvidia" ] && inst 0755 "$HERE/vv-nvidia" usr/local/sbin/vv-nvidia
+echo "== NVIDIA driver helper (optional, run by the user on the installed system)"
+inst 0755 "$HERE/vv-nvidia" usr/local/sbin/vv-nvidia
+for dest in usr/share/applications/vv-nvidia.desktop etc/skel/Desktop/vv-nvidia.desktop; do
+    mode=0644; [ "${dest#etc/skel}" != "$dest" ] && mode=0755
+    put "$mode" "$dest" <<'EOF'
+[Desktop Entry]
+Name=NVIDIA driver
+Comment=Optional: NVIDIA's proprietary graphics driver (shows the cards, then install or undo)
+Exec=/usr/local/sbin/vv-nvidia menu
+Icon=vv-nvidia
+Terminal=true
+Type=Application
+Categories=System;Settings;HardwareSettings;
+EOF
+done
 
 echo "== installer"
 inst 0755 "$HERE/vaevictis_install.sh"      usr/local/bin/vaevictis_install.sh
@@ -156,19 +154,17 @@ APT::Install-Recommends "false";
 APT::Install-Suggests "false";
 EOF
 
-echo "== VaeVictis APT repository"
-if [ "$APT_REPO" = 1 ]; then
-    cp "$KRDEB" "$CH/tmp/vv-keyring.deb"
-    "$VVC" run dpkg -i /tmp/vv-keyring.deb || { rm -f "$CH/tmp/vv-keyring.deb"; die "dpkg could not install $KRDEB"; }
-    rm -f "$CH/tmp/vv-keyring.deb"
-    echo "  configured: only vaevictis-* packages, signed index with an expiry date"
-else
-    echo "  NOT configured (add --apt-repo once two-factor login is on for GitHub and Cloudflare)"
+echo "== VaeVictis APT repository: closed (October 2026), never configured"
+if "$VVC" run dpkg-query -W -f='${db:Status-Abbrev}' vaevictis-archive-keyring 2>/dev/null | grep -q '^[ic]'; then
+    "$VVC" run dpkg --purge vaevictis-archive-keyring >/dev/null || die "could not remove vaevictis-archive-keyring from the chroot"
+    echo "  removed the package vaevictis-archive-keyring (key, source entry, pin)"
 fi
+gone etc/apt/sources.list.d/vaevictis.sources etc/apt/preferences.d/vaevictis etc/apt/keyrings/vaevictis.gpg \
+     usr/share/keyrings/vaevictis-archive-keyring.gpg
+echo "  updates: Debian only"
 
 echo "== inside the chroot: libraries the programs import"
 "$VVC" run /bin/sh -c '
-python3 -c "import fitz, PyQt6.QtWidgets" 2>/dev/null && echo "  VaeVictis PDF: PyMuPDF, PyQt6 ok" || echo "  WARNING: VaeVictis PDF needs python3-pymupdf and python3-pyqt6"
 python3 -c "import PyQt6.QtMultimedia, mutagen" 2>/dev/null && echo "  Aurora: PyQt6 multimedia, mutagen ok" || echo "  WARNING: Aurora needs python3-pyqt6.qtmultimedia and python3-mutagen"
 python3 -c "import tkinter, PIL.ImageTk" 2>/dev/null && echo "  LinPaint+: Tk, Pillow ok" || echo "  WARNING: LinPaint+ needs python3-tk and python3-pil.imagetk"
 command -v update-desktop-database >/dev/null && update-desktop-database -q /usr/share/applications /usr/local/share/applications || true
