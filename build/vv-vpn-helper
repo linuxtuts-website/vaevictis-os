@@ -15,6 +15,11 @@ Least privilege (1.1)
     interface name, never a path.
   - wg-quick never reads /etc/wireguard: it gets a clean copy in /run/vv-vpn/run (root only), rebuilt from the
     checked values, without DNS (set here with resolvconf) and with the server already as an IP address.
+  - (1.3) Every value in that copy is written again in its standard form (addresses and networks as Python's ipaddress
+    prints them, numbers as numbers), never copied from the file; IPv6 scope IDs ("%...") are refused; ListenPort is
+    left out (a client does not need to listen on a port). Then a second, independent check reads the finished copy
+    and the DNS lines: only the known settings and the characters of keys, addresses and numbers may appear, or nothing
+    is started.
   - wg-quick runs in a systemd sandbox: of root's powers it keeps only CAP_NET_ADMIN (configure the network),
     the whole file system is read-only, /home, /root and the system's secrets are hidden, it cannot gain new
     privileges, load modules or open network connections of its own.
@@ -92,6 +97,10 @@ CANON = {"privatekey": "PrivateKey", "address": "Address", "dns": "DNS", "mtu": 
          "table": "Table", "fwmark": "FwMark", "publickey": "PublicKey", "presharedkey": "PresharedKey",
          "allowedips": "AllowedIPs", "endpoint": "Endpoint", "persistentkeepalive": "PersistentKeepalive"}
 HOOKS = ("preup", "postup", "predown", "postdown")
+# the second check (1.3): what the finished copy for wg-quick and the DNS lines may contain, whatever the parser let through
+SAFE_LINE = re.compile(r"\[(?:Interface|Peer)\]|(?:PrivateKey|PublicKey|PresharedKey|Address|AllowedIPs|Endpoint|MTU"
+                       r"|PersistentKeepalive|Table) = [A-Za-z0-9+/=.:,\[\] ]{1,4096}|")
+SAFE_IP = re.compile(r"[0-9A-Fa-f.:]{2,45}")
 
 
 class ConfError(Exception):
@@ -161,6 +170,8 @@ def _int_in(value, lo, hi, key):
 
 
 def check_value(key, value):
+    if "%" in value and key in ("address", "allowedips", "dns"):
+        raise ConfError(f"invalid {CANON[key]} '{value}' (IPv6 scope IDs are not supported)")
     try:
         if key in ("privatekey", "publickey", "presharedkey"):
             if not KEY_RE.fullmatch(value):
@@ -321,6 +332,31 @@ def resolve_endpoints(sections, allow_dns, cached, ipv6):
     return out
 
 
+def canonical(key, value):
+    """The value as it goes into the copy: written again from what was parsed, never the text of the file."""
+    if key in ("privatekey", "publickey", "presharedkey"):
+        return value                                  # already a full match of KEY_RE: 44 base64 characters
+    if key == "address":
+        return [ipaddress.ip_interface(x) for x in _items(value)]
+    if key == "allowedips":
+        return [ipaddress.ip_network(x, strict=False) for x in _items(value)]
+    if key in ("mtu", "persistentkeepalive"):
+        return "off" if value.lower() == "off" else str(int(value))
+    if key == "table":
+        return "auto"                                 # the only value check_value accepts
+    raise ConfError(f"{CANON[key]} has no place in the copy for wg-quick")
+
+
+def second_check(text, dns, search):
+    """Independent of the parser: the finished copy may hold only known settings with the characters of keys, addresses
+    and numbers, the DNS lines only addresses and host names. Anything else means a bug above: nothing is started."""
+    for n, line in enumerate(text.split("\n"), 1):
+        if not SAFE_LINE.fullmatch(line):
+            raise ConfError(f"internal check failed on line {n} of the copy for wg-quick; nothing was started")
+    if not all(SAFE_IP.fullmatch(d) for d in dns) or not all(HOST_RE.fullmatch(s) for s in search):
+        raise ConfError("internal check failed on the DNS settings; nothing was started")
+
+
 def runtime_conf(sections, endpoints, ipv6):
     """The text wg-quick reads, rebuilt only from checked values; plus the DNS servers and search domains."""
     lines, dns, search, v4_addr = [], [], [], False
@@ -337,23 +373,27 @@ def runtime_conf(sections, endpoints, ipv6):
                     except ValueError:
                         search.append(x)
                 continue
-            if key in ("address", "allowedips"):
-                vals = _items(value)
-                if not ipv6:
-                    vals = [x for x in vals if ":" not in x]
-                if not vals:
-                    continue
-                if key == "address":
-                    v4_addr = v4_addr or any(":" not in x for x in vals)
-                value = ", ".join(vals)
+            if key == "listenport":
+                continue                              # a client does not need to listen on a port
             if key == "endpoint":
                 ip, port = endpoints[pub]
                 value = f"[{ip}]:{port}" if ":" in ip else f"{ip}:{port}"
+            else:
+                value = canonical(key, value)
+            if key in ("address", "allowedips"):
+                vals = [x for x in value if x.version == 4 or ipv6]
+                if not vals:
+                    continue
+                if key == "address":
+                    v4_addr = v4_addr or any(x.version == 4 for x in vals)
+                value = ", ".join(str(x) for x in vals)
             lines.append(f"{CANON[key]} = {value}")
         lines.append("")
     if not v4_addr and not ipv6:
         raise ConfError("the config has only IPv6 addresses, and IPv6 is off on this system")
-    return "\n".join(lines), dns, search
+    text = "\n".join(lines)
+    second_check(text, dns, search)
+    return text, dns, search
 
 
 # ---- running wg-quick in the sandbox ---------------------------------------------------------------------------

@@ -95,5 +95,56 @@ try:
 except h.ConfError as e: check("IPv6" in str(e), str(e))
 # names: fullmatch, no trailing newline
 check(h.valid_name("proton-ch1") and not h.valid_name("wg0\n") and not h.valid_name("../x") and not h.valid_name("a"*16), "names")
+
+# 1.3: IPv6 scope IDs refused (Python's ipaddress accepts "fe80::1%anything", and 1.2 copied that text to wg-quick)
+refuses(proton.replace("2a07:b944::2:2/128", "fe80::1%$(reboot)/64"), "scope")
+refuses(proton.replace("::/0", "fe80::%eth0/64"), "scope")
+refuses(proton.replace("2a07:b944::2:1", "fe80::1%a b"), "scope")
+# 1.3: every value written again in its standard form, never copied from the file
+odd = proton.replace("10.2.0.2/32", "10.2.0.2/255.255.255.255").replace("::/0", "::0/0").replace(
+    "0.0.0.0/0", "0.0.0.0/000").replace("[Peer]", "MTU = 01420\nListenPort = 4444\n\n[Peer]\nPersistentKeepalive = 025")
+so = h.parse_conf(odd)
+for v6 in (False, True):
+    to, _, _ = h.runtime_conf(so, h.resolve_endpoints(so, True, {}, v6), ipv6=v6)
+    check("Address = 10.2.0.2/32" in to and "AllowedIPs = 0.0.0.0/0" in to and "MTU = 1420" in to
+          and "PersistentKeepalive = 25" in to, f"standard form: {to}")
+    check("ListenPort" not in to and "4444" not in to, "ListenPort left in the copy")
+    check(("AllowedIPs = 0.0.0.0/0, ::/0" in to) == v6, f"IPv6 network standard form: {to}")
+# 1.3: the second check refuses whatever the parser might let through one day
+for bad in ("[Interface]\nPostUp = id", "[Interface]\nAddress = 10.0.0.2/32; reboot", "[Interface]\nAddress = $(id)",
+            "[Interface]\nPrivateKey = x\nSaveConfig = true", "[Peer]\nEndpoint = 1.2.3.4:1`id`", "[Interface]\nAddress = a\tb",
+            "[Server]", "[Interface]\nMTU = 1420 #", "[Interface]\nDNS = 10.0.0.1"):
+    try: h.second_check(bad, [], []); check(False, f"second check let through {bad!r}")
+    except h.ConfError as e: check("internal check" in str(e), str(e))
+for d, s in ((["10.0.0.1; x"], []), (["fe80::1%a"], []), ([], ["a b"]), ([], ["$(id)"])):
+    try: h.second_check("[Interface]", d, s); check(False, f"second check let DNS through {d} {s}")
+    except h.ConfError as e: check("internal check" in str(e), str(e))
+# 1.3: random hostile edits of the real configs: refused, or accepted with a copy that passes the second check
+import random
+rnd = random.Random(1303)
+HOSTILE = list("$`();|&<>\"'\\%*?!{}~#\t ") + ["\n", "\nPostUp = id\n", "\nListenPort = 1\n", "::", "/", ",", "=", "[", "]"]
+accepted = refused = 0
+for i in range(60000):
+    base = rnd.choice((proton, mullvad, airvpn, split))
+    t = list(base)
+    for _ in range(rnd.randint(1, 2)):
+        t.insert(rnd.randrange(len(t) + 1), rnd.choice(HOSTILE))
+    t = "".join(t)
+    try:
+        s = h.parse_conf(t)
+    except h.ConfError:
+        refused += 1; continue
+    except Exception as e:
+        check(False, f"parser crashed with {type(e).__name__} on {t!r}")
+    for v6 in (False, True):
+        try:
+            eps = {first_pub: ("203.0.113.9", 51820) for first_pub in (h.first(items, "publickey") for sec, items in s if sec == "peer")}
+            txt, d, sr = h.runtime_conf(s, eps, ipv6=v6)
+        except h.ConfError as e:
+            check("internal check" not in str(e), f"parser accepted what the second check refused: {t!r} -> {e}")
+            continue
+        check(not any(x in txt for x in ("PostUp", "ListenPort", "$", "`", ";", "%", "#")), f"hostile text in the copy: {txt!r}")
+    accepted += 1
+check(accepted > 1500 and refused > 10000, f"fuzz too narrow: {accepted} accepted, {refused} refused")
 open(sys.argv[2], "w").write(h.ks_rules("proton-ch1", [("185.159.157.1", 51820)]))
 print(f"helper logic: {ok} checks passed")

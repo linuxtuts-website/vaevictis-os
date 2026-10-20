@@ -20,9 +20,9 @@ updates, no telemetry, and a few honest tools (VPN, password manager, snapshots)
 | A malicious song or image | Aurora and LinPaint+ run in a sandbox: no network, system and home read-only except the data folders, keys and browser profiles hidden, D-Bus filtered. PDFs open in Debian's viewer, outside this sandbox |
 | Someone at the keyboard changing the start options to skip the login | GRUB password: starting needs none, editing the entries or the GRUB console does |
 | Memory-corruption exploitation | `init_on_alloc`/`init_on_free`, `slab_nomerge`, `randomize_kstack_offset`, `vsyscall=none`, restricted `dmesg`, BPF, ptrace, kernel pointers |
-| Network snooping on public Wi-Fi | WireGuard VPN manager; its kill switch is designed to block everything outside the tunnel, also for virtual machines and during a reconnect (you must trust the VPN provider) |
-| A bug in the VPN tools turned against the system | Configs read with a whitelist (no commands); WireGuard runs in a systemd sandbox with only `CAP_NET_ADMIN` and a read-only system |
-| Known bugs in installed software | Automatic security updates from Debian; VaeVictis packages from a signed repository whose index expires, pinned to `vaevictis-*` names only |
+| Network snooping on public Wi-Fi | WireGuard VPN manager; its kill switch is designed to block everything outside the tunnel, also for virtual machines and during a reconnect. You must trust the VPN provider: import configuration files only from a provider you trust. VaeVictis rejects scripts inside them, but cannot vouch for the provider |
+| A bug in the VPN tools turned against the system | Configs read with a whitelist (no commands); every value is written again in its standard form and checked a second time before WireGuard reads it; WireGuard runs in a systemd sandbox with only `CAP_NET_ADMIN` and a read-only system |
+| Known bugs in installed software | Automatic security updates from Debian. VaeVictis has no package repository of its own since 1.2 ([why](docs/APT-REPOSITORY.md)): fixes of its own tools come as files of a GitHub release |
 | Metadata leaks in documents you share | mat2 |
 
 ## What it does NOT protect against
