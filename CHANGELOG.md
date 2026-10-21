@@ -16,14 +16,16 @@ before. For systems installed from 1.1 or 1.2, the same changes come as three pa
   it, and only with IPv6 switched back on, but the copy was meant to hold checked values only); `ListenPort` is left
   out; a second check, independent of the parser, reads the finished copy and starts nothing if anything unexpected is
   in it. Tested with 60,000 random hostile edits of real provider configs. After an AI-assisted review (Argon by
-  Google; not an independent security audit), also: one server per config (`[Peer]`), with `AllowedIPs`; a config that
-  sends all traffic through the tunnel must name a DNS server, and once the tunnel is up that server must be reached
-  through it (1.2 accepted a config without a `DNS` line, and DNS then kept going to the DNS server the system already
-  had: outside the tunnel when that is the router, as it usually is; the same for a `DNS` line naming an address of
-  the local network); tunnel addresses that would take over the computer's routing are refused, and so is a server
-  whose address is inside the tunnel's own networks; a second tunnel is refused when it would take the kill switch off
-  the first one or, like it, carry all traffic; after a failed first attempt, "connect again" also works under the
-  kill switch with a server given by name. The VPN window has the VaeVictis colours and a dark title bar.
+  Google; not an independent security audit), also: one server per config (`[Peer]`), with `AllowedIPs`, and an
+  `Address`; a config that sends all traffic through the tunnel must name a DNS server, and once the tunnel is up that
+  server must be reached through it (1.2 accepted a config without a `DNS` line, and DNS then kept going to the DNS
+  server the system already had: outside the tunnel when that is the router, as it usually is; the same for a `DNS`
+  line naming an address of the local network); the DNS servers of a config for a few networks are added to the others
+  instead of replacing them; while the kill switch is on, only a config that carries all traffic can connect (another
+  one would have released it); tunnel addresses that would take over the computer's routing are refused, and so is a
+  server whose address is inside the tunnel's own networks; a second tunnel is refused when it would take the kill
+  switch off the first one or, like it, carry all traffic; after a failed first attempt, "connect again" also works
+  under the kill switch with a server given by name. The VPN window has the VaeVictis colours and a dark title bar.
 - **SSH** (still off by default): ed25519 keys only, no RSA; no sftp; post-quantum key exchange first (ML-KEM and sntrup
   hybrids, X25519 for older clients); at most 3 connections waiting for login from one address (`PerSourceMaxStartups 3`,
   `MaxStartups 10:30:60`).

@@ -21,12 +21,14 @@ Least privilege (1.1)
     and the DNS lines: only the known settings and the characters of keys, addresses and numbers may appear, or nothing
     is started.
   - (1.3, after an AI-assisted review: Argon by Google, not an independent security audit) one server per config
-    ([Peer]), with AllowedIPs; a full tunnel must name a DNS server this system can use (without one, DNS would keep
-    going to the normal DNS server, outside the tunnel); no tunnel Address that is loopback, multicast, unspecified or
-    link-local, or shorter than /8 (IPv4) or /32 (IPv6); the server's own address neither in the Address network nor
-    in AllowedIPs other than /0 (the tunnel would carry its own packets); with a full tunnel, every DNS server must be
-    reached through the tunnel once it is up (not, say, the router of the local network); no second tunnel that would take the
-    kill switch off the first, or carry all traffic like it; "down" only for a VaeVictis tunnel or a WireGuard interface.
+    ([Peer]), with AllowedIPs, and an Address; a full tunnel must name a DNS server this system can use (without one,
+    DNS would keep going to the normal DNS server, outside the tunnel), and once it is up every one of its DNS servers
+    must be reached through it (not, say, the router of the local network); only a full tunnel's DNS servers replace
+    the others; no tunnel Address that is loopback, multicast, unspecified or link-local, or shorter than /8 (IPv4) or
+    /32 (IPv6); the server's own address neither in the Address network nor in AllowedIPs other than /0 (the tunnel
+    would carry its own packets); while the kill switch is on, only a full tunnel can connect; no second tunnel that
+    would take the kill switch off the first, or carry all traffic like it; "down" only for a VaeVictis tunnel or a
+    WireGuard interface.
   - wg-quick runs in a systemd sandbox: of root's powers it keeps only CAP_NET_ADMIN (configure the network),
     the whole file system is read-only, /home, /root and the system's secrets are hidden, it cannot gain new
     privileges, load modules or open network connections of its own.
@@ -261,6 +263,8 @@ def parse_conf(text):
         raise ConfError("no [Interface] section at the top")
     if not any(k == "privatekey" for k, _ in sections[0][1]):
         raise ConfError("[Interface] has no PrivateKey")
+    if not any(k == "address" for k, _ in sections[0][1]):
+        raise ConfError("[Interface] has no Address (the address of this PC inside the tunnel)")
     peers = [items for sec, items in sections if sec == "peer"]
     if not peers:
         raise ConfError("no [Peer] section")
@@ -418,6 +422,8 @@ def runtime_conf(sections, endpoints, ipv6):
         lines.append("")
     if not v4_addr and not ipv6:
         raise ConfError("the config has only IPv6 addresses, and IPv6 is off on this system")
+    if not nets:
+        raise ConfError("no Address this system can use")
     if not allowed:
         raise ConfError("no AllowedIPs this system can use (only IPv6 ones, and IPv6 is off): no traffic would go "
                         "through the tunnel")
@@ -460,7 +466,10 @@ def sandboxed_wg_quick(action, conf_path):
     return subprocess.run(cmd, stdin=subprocess.DEVNULL).returncode
 
 
-def set_dns(name, dns, search):
+def set_dns(name, dns, search, exclusive):
+    """The DNS servers of the tunnel, through openresolv. Exclusive (-x) only for a tunnel that carries all traffic: the
+    DNS servers of a tunnel for a few networks are added to the others and never replace them (they could be on the
+    local network, outside a VPN that is up at the same time)."""
     if not dns:
         return True
     rc = shutil.which("resolvconf", path="/usr/sbin:/sbin:/usr/bin")
@@ -468,7 +477,8 @@ def set_dns(name, dns, search):
         print("resolvconf is missing (package openresolv): the DNS servers of the VPN cannot be set.", file=sys.stderr)
         return False
     data = "".join(f"nameserver {d}\n" for d in dns) + (f"search {' '.join(search)}\n" if search else "")
-    return subprocess.run([rc, "-a", name, "-m", "0", "-x"], input=data, text=True).returncode == 0
+    return subprocess.run([rc, "-a", name, "-m", "0"] + (["-x"] if exclusive else []), input=data,
+                          text=True).returncode == 0
 
 
 def unset_dns(name):
@@ -558,6 +568,8 @@ def ks_off():
 
 
 def ks_on(name):
+    if ks_iface() not in (None, name):
+        fail(f"The kill switch guards the tunnel '{ks_iface()}': release it first.")
     if not full_tunnel(read_conf(name)):
         fail("The kill switch needs a full-tunnel config (AllowedIPs = 0.0.0.0/0): "
              "with this config part of your traffic is meant to leave outside the tunnel.")
@@ -627,6 +639,10 @@ def cmd_up(name, want_ks):
     ipv6 = ipv6_available()
     blocked = os.path.exists(KS_FLAG)                 # the kill switch is on now (for example a dropped tunnel)
     guard = want_ks or blocked                        # keep everything blocked while connecting
+    if blocked and not full_tunnel(sections):
+        fail("Not connected: the kill switch is on, and this config does not carry all traffic (connecting it would "
+             "release the kill switch for everything else). Release the kill switch first, or connect a config that "
+             "carries all traffic.\nThe kill switch stays on: nothing leaves this PC.")
     if want_ks and not full_tunnel(sections):
         fail("The kill switch needs a full-tunnel config (AllowedIPs = 0.0.0.0/0). "
              "Connect without the kill switch, or use another config.")
@@ -663,7 +679,7 @@ def cmd_up(name, want_ks):
     if outside:
         abort_up(name, conf, guard, f"Not connected: the DNS server {', '.join(outside)} of this config is not reached "
                  "through the tunnel (an address of your own network?): DNS would leave outside it.")
-    if not set_dns(name, dns, search):
+    if not set_dns(name, dns, search, exclusive=full_tunnel(sections)):
         abort_up(name, conf, guard, "Not connected: the DNS servers of the VPN could not be set "
                  "(DNS would leave outside the tunnel).")
     live = live_endpoints(name)

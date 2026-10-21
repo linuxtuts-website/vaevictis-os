@@ -146,6 +146,18 @@ for i in range(60000):
         check(not any(x in txt for x in ("PostUp", "ListenPort", "$", "`", ";", "%", "#")), f"hostile text in the copy: {txt!r}")
     accepted += 1
 check(accepted > 1500 and refused > 10000, f"fuzz too narrow: {accepted} accepted, {refused} refused")
+# 1.3 (Argon's second look): an Address is required
+refuses(proton.replace("Address = 10.2.0.2/32, 2a07:b944::2:2/128\n", ""), "Address")
+# set_dns: exclusive (-x) only when asked (a full tunnel); the DNS lines go to resolvconf on stdin
+seen = []
+class R: returncode = 0
+orig_run, orig_which = h.subprocess.run, h.shutil.which
+h.subprocess.run = lambda cmd, **k: seen.append((cmd, k.get("input"))) or R()
+h.shutil.which = lambda name, path=None: "/usr/sbin/resolvconf"
+check(h.set_dns("t1", ["10.2.0.1"], ["vpn.example"], exclusive=True) and seen[-1][0] == ["/usr/sbin/resolvconf", "-a", "t1", "-m", "0", "-x"]
+      and seen[-1][1] == "nameserver 10.2.0.1\nsearch vpn.example\n", f"set_dns exclusive {seen}")
+check(h.set_dns("t2", ["10.67.0.1"], [], exclusive=False) and seen[-1][0] == ["/usr/sbin/resolvconf", "-a", "t2", "-m", "0"], f"set_dns split {seen}")
+h.subprocess.run, h.shutil.which = orig_run, orig_which
 # 1.3 (Argon's review): one server per config, with AllowedIPs
 refuses(proton + f"\n[Peer]\nPublicKey = {PUB}\nAllowedIPs = 10.0.0.0/8\nEndpoint = 203.0.113.7:51820\n", "one server")
 refuses(proton + f"\n[Peer]\nPublicKey = {key()}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 203.0.113.7:51820\n", "one server")

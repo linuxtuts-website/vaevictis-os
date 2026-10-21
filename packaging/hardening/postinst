@@ -120,7 +120,10 @@ check_keys() { # check_keys FILE: every line that is not a plain ed25519 key (ke
 }
 conf_files() { # (in a subshell) sshd_config and every file its Include lines name, recursively, one per line; relative
                # names are from /etc/ssh, as sshd reads them. "!" lines: what could not be followed.
-    set +f     # the globs of Include lines are expanded here, on purpose
+    # The globs of Include lines are expanded here, on purpose, and from /etc/ssh as sshd does: a relative glob must
+    # never match files of the folder dpkg was started from.
+    set +f
+    cd /etc/ssh || { echo "!/etc/ssh cannot be entered"; return 0; }
     all=/etc/ssh/sshd_config; new=$all; round=0
     while [ -n "$new" ]; do
         round=$((round + 1))

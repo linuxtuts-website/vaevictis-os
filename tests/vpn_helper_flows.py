@@ -15,7 +15,7 @@ def setup(h, wg_rc=0, dns_ok=True):
         calls.append(("wg-quick", action, open(conf).read()))
         return wg_rc
     h.sandboxed_wg_quick = fake_wg
-    h.set_dns = lambda n, d, s: calls.append(("dns+", n, tuple(d))) or dns_ok
+    h.set_dns = lambda n, d, s, exclusive: calls.append(("dns+", n, tuple(d), exclusive)) or dns_ok
     h.unset_dns = lambda n: calls.append(("dns-", n))
     h.live_endpoints = lambda n: {PUB: ("185.159.157.1", 51820)}
     h.wg_interfaces = lambda: []
@@ -48,7 +48,7 @@ check(rc == 0, f"A rc {rc} {err}")
 check('oifname "pip" accept' in nft_has() and "185.159.157.1" in nft_has() and "chain forward" in nft_has(), "A rules")
 check(os.path.exists(h.KS_FLAG), "A flag")
 check(stat.S_IMODE(os.stat(h.KS_FLAG).st_mode) == 0o600, "A flag root-only (1.2)")
-check(("dns+", "pip", ("10.2.0.1",)) in calls, "A dns")
+check(("dns+", "pip", ("10.2.0.1",), True) in calls, "A dns (exclusive: a full tunnel)")
 rt = f"{T}/run/run/pip.conf"
 check(stat.S_IMODE(os.stat(rt).st_mode) == 0o600 and stat.S_IMODE(os.stat(f"{T}/run/run").st_mode) == 0o700, "A perms")
 wq = [c for c in calls if c[0] == "wg-quick"][0]
@@ -163,6 +163,23 @@ h = setup(load()); calls.clear()
 h.wg_interfaces = lambda: ["psplit"]; h.wg_full = lambda i: False
 rc, err = run(h, h.cmd_up, "pip", True)            # pip "dropped": kill switch on, flag says pip, pip not up
 check(rc == 0, f"I5 reconnect under the kill switch with another tunnel up {rc} {err}")
+# I6 (Argon's second look): kill switch on (pip dropped) + a config for a few networks: refused, the kill switch
+# is not moved or released; then ks-on for another tunnel than the one it guards: refused
+open(f"{T}/etc/psplitdns.conf", "w").write(f"[Interface]\nPrivateKey = {PK}\nAddress = 10.67.0.2/32\nDNS = 10.67.0.1\n[Peer]\n"
+                                          f"PublicKey = {PUB}\nAllowedIPs = 10.67.0.0/24\nEndpoint = 203.0.113.67:51820\n")
+h = setup(load()); calls.clear()
+before = nft_has()
+rc, err = run(h, h.cmd_up, "psplitdns", False)
+check(rc == 1 and "the kill switch is on" in err and not calls and nft_has() == before and os.path.exists(h.KS_FLAG),
+      f"I6 {rc} {err}")
+rc, err = run(h, h.ks_on, "psplit")
+check(rc == 1 and "kill switch guards the tunnel 'pip'" in err and nft_has() == before, f"I6 ks-on {rc} {err}")
+# I7: a config for a few networks, kill switch off: its DNS servers are added, not exclusive
+subprocess.run(["nft", "delete", "table", "inet", "vv_killswitch"], capture_output=True)
+if os.path.exists(h.KS_FLAG): os.remove(h.KS_FLAG)
+h = setup(load()); calls.clear()
+rc, err = run(h, h.cmd_up, "psplitdns", False)
+check(rc == 0 and ("dns+", "psplitdns", ("10.67.0.1",), False) in calls, f"I7 split DNS not exclusive {rc} {err} {calls}")
 # J (Argon's review): the server address is kept even when the first connection fails, so that "connect again"
 # works under the kill switch with a server given by name
 subprocess.run(["nft", "delete", "table", "inet", "vv_killswitch"], capture_output=True)
