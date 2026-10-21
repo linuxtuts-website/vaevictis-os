@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.3 (2026-10)
+## 1.3 (2026-10-21)
 
 A new look from GRUB onwards, the VPN helper checked twice, and SSH and the firewall tightened. Debian 13 underneath, as
 before. For systems installed from 1.1 or 1.2, the same changes come as three packages: [docs/UPDATING.md](docs/UPDATING.md).
