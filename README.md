@@ -125,7 +125,8 @@ From 1.0 or 1.0.1: [docs/FROM-1.0.md](docs/FROM-1.0.md).
 ## Network activity
 
 No telemetry, no analytics. The only automatic connections are the daily check for Debian security updates, time sync, and whatever
-the programs you start do (Firefox ESR follows its own settings). Verify with `sudo nft list ruleset` and `ss -tulpn`.
+the programs you start do. Firefox ESR has system policies (`/etc/firefox/policies/policies.json`): no telemetry, no studies,
+strict tracking protection (you can switch it back to Standard in its settings if a site breaks), no sponsored content. Verify with `sudo nft list ruleset` and `ss -tulpn`.
 
 ## Build it yourself
 

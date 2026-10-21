@@ -138,6 +138,55 @@ install jffs2 /bin/false
 install firewire-core /bin/false
 EOF
 
+echo "== Firefox ESR: system policies (1.3)"
+# Firefox reads /etc/firefox/policies/policies.json. Nothing is locked except what Firefox always locks (telemetry,
+# studies): a user can still switch tracking protection back to Standard in Settings if a site breaks.
+put etc/firefox/policies/policies.json <<'EOF'
+{
+  "policies": {
+    "DisableTelemetry": true,
+    "DisableFirefoxStudies": true,
+    "EnableTrackingProtection": { "Category": "strict" },
+    "UserMessaging": {
+      "ExtensionRecommendations": false,
+      "FeatureRecommendations": false,
+      "UrlbarInterventions": false,
+      "MoreFromMozilla": false,
+      "FirefoxLabs": false,
+      "Locked": false
+    },
+    "FirefoxHome": { "SponsoredTopSites": false, "SponsoredStories": false, "SponsoredPocket": false, "Locked": false },
+    "FirefoxSuggest": { "SponsoredSuggestions": false, "ImproveSuggest": false, "Locked": false }
+  }
+}
+EOF
+# Every policy and key must be one this Firefox knows (its own schema, inside omni.ja); an unknown one would only
+# show an error in about:policies, but a mistake here must be caught at build time.
+python3 -I - "$CH" <<'PYF' || die "Firefox policies: a policy or key this Firefox does not know (see above)"
+import json, sys, zipfile
+ch = sys.argv[1]
+pol = json.load(open(ch + "/etc/firefox/policies/policies.json"))["policies"]
+try:
+    z = zipfile.ZipFile(ch + "/usr/lib/firefox-esr/browser/omni.ja")
+    schema = json.loads(z.read("modules/policies/policies-schema.json"))["properties"]
+except (OSError, KeyError, zipfile.BadZipFile) as e:
+    print("  policies written; not checked against Firefox's schema (firefox-esr not found: %s)" % e); sys.exit(0)
+bad = []
+for k, v in pol.items():
+    if k not in schema:
+        bad.append(k); continue
+    props = schema[k].get("properties", {})
+    if isinstance(v, dict):
+        for kk, vv in v.items():
+            if kk not in props:
+                bad.append(k + "." + kk)
+            elif props[kk].get("enum") and vv not in props[kk]["enum"]:
+                bad.append("%s.%s=%s" % (k, kk, vv))
+if bad:
+    print("  UNKNOWN to this Firefox: " + ", ".join(bad)); sys.exit(1)
+print("  %d policies, all known to this Firefox (its own schema)" % len(pol))
+PYF
+
 echo "== core dumps"
 put etc/systemd/coredump.conf.d/10-vaevictis.conf <<'EOF'
 [Coredump]
@@ -222,6 +271,7 @@ Applied
   sleep      hibernation masked (it would write RAM to disk); normal suspend still works
   panic      GUI as your user + a root helper allowed by one exact sudoers rule, administrators only (not a root GUI)
   boot menu  vv-grub-password: the installer always sets a GRUB password (start without it; edit and console need it)
+  Firefox    system policies: no telemetry, no studies, strict tracking protection, no sponsored content or recommendations
 These files live in the root file system, so a system installed from this ISO inherits them.
 Boot options (ipv6.disable, init_on_free, ...) belong to the live boot menu: see vv-iso.
 
