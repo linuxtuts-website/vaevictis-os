@@ -22,13 +22,17 @@ A Debian or Ubuntu machine with: `debootstrap`, `squashfs-tools`, `xorriso`, `mt
 2. **Audit.** `./vv-chroot audit` is a read-only report of what still needs fixing.
 3. **Apply the project's settings** (each is safe to repeat; replaced files are backed up outside the image):
    - packages the programs need: `./vv-chroot run apt-get install bubblewrap xdg-dbus-proxy xdg-user-dirs plymouth plymouth-label fonts-ibm-plex evince`
+   - the 1.3 look (Debian packages only): `./vv-chroot run apt-get install papirus-icon-theme gnome-shell-extension-blur-my-shell ptyxis`
+     and `./vv-chroot run apt-get purge gnome-terminal gnome-terminal-data` (Ptyxis is the terminal)
    - the Debian packages of this repository, from the repository root: `packaging/tools/build.sh`, `packaging/aurora/build.sh`
      and, only to publish it for 1.1 systems, `packaging/archive-keyring/build.sh` (they write `dist/`)
    - `./vv-secure`: kernel and system hardening, panic button, `vv-grub-password`
    - `./vv-harden`: nftables firewall, hardened sshd (switched off), fail2ban
    - `./vv-apps`: every VaeVictis program, its launchers and its sandbox (see below). From 1.2 it also removes, from a chroot
      an earlier build used, VaeVictis PDF and anything of the closed APT repository (`--apt-repo` is refused)
-   - `./vv-branding`: icons, Welcome window, login screen, system identity (it also removes what 1.0 builds had of the HIDS)
+   - `./vv-look`: the VaeVictis-Dark icon theme (from `build/icons`) on top of Papirus-Dark, GNOME's dark style by default
+   - `./vv-branding`: icons, Welcome window, login screen, system identity, the extensions switched on (Blur my Shell from
+     1.3); it also removes what 1.0 builds had of the HIDS
    - `./vv-boot-theme`: the GRUB menu, the Plymouth boot screen and the desktop wallpaper (it rebuilds the chroot's initramfs)
    - optional: `vv-nvidia` is installed by `vv-apps`, with a launcher; it is run by the user on the installed system
 4. **Replace the personal user with the live user.** `./vv-liveuser` shows the plan, `./vv-liveuser --apply` does it.

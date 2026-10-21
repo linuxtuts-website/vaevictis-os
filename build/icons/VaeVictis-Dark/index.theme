@@ -1,0 +1,19 @@
+[Icon Theme]
+Name=VaeVictis-Dark
+Comment=VaeVictis folders and app icons on top of Papirus-Dark
+Inherits=Papirus-Dark,Papirus,Adwaita,hicolor
+Directories=scalable/places,scalable/apps
+
+[scalable/places]
+Context=Places
+Size=64
+MinSize=8
+MaxSize=512
+Type=Scalable
+
+[scalable/apps]
+Context=Applications
+Size=64
+MinSize=8
+MaxSize=512
+Type=Scalable

@@ -179,9 +179,27 @@ done
 head_ "Packages"
 for p in systemd-cryptsetup cryptsetup-initramfs console-setup ffmpegthumbnailer firefox-esr grub-efi-amd64-bin grub-pc-bin os-prober efibootmgr \
          nftables fail2ban apparmor keepassxc lynis vaevictis-aurora vaevictis-tools bubblewrap xdg-dbus-proxy xdg-user-dirs plymouth plymouth-label \
-         fonts-ibm-plex wl-clipboard wireguard-tools openresolv; do
+         fonts-ibm-plex wl-clipboard wireguard-tools openresolv papirus-icon-theme gnome-shell-extension-blur-my-shell ptyxis; do
     pkg_ok "$p" && ok "$p" || bad "$p is not installed"
 done
+
+pkg_ok gnome-terminal && bad "GNOME Terminal is still installed (1.3: Ptyxis is the terminal)" || ok "no GNOME Terminal (Ptyxis is the terminal)"
+
+head_ "The 1.3 look"
+exists usr/share/icons/VaeVictis-Dark/index.theme && cat_of usr/share/icons/VaeVictis-Dark/index.theme | grep -q '^Inherits=Papirus-Dark' \
+    && ok "icon theme VaeVictis-Dark, on top of Papirus-Dark" || bad "icon theme VaeVictis-Dark missing (run vv-look)"
+exists usr/share/icons/VaeVictis-Dark/icon-theme.cache && ok "VaeVictis-Dark icon cache" || bad "no icon cache for VaeVictis-Dark (run vv-look)"
+look="$(cat_of etc/dconf/db/vaevictis.d/20-look-vaevictis)"
+printf '%s\n' "$look" | grep -qx "icon-theme='VaeVictis-Dark'" && printf '%s\n' "$look" | grep -qx "color-scheme='prefer-dark'" \
+    && ok "defaults: VaeVictis-Dark icons, dark style" || bad "look defaults missing (run vv-look)"
+cat_of etc/dconf/db/vaevictis.d/10-extensions-vaevictis | grep -q "blur-my-shell@aunetx" \
+    && exists usr/share/gnome-shell/extensions/blur-my-shell@aunetx/metadata.json \
+    && ok "Blur my Shell installed and switched on" || bad "Blur my Shell not installed or not switched on (vv-look, vv-branding)"
+iconbad=""
+for n in vv-aurora vv-linpaint vv-install vv-nvidia vv-snap vv-welcome vv-vpn vv-panic; do
+    cat_of "usr/share/icons/hicolor/scalable/apps/$n.svg" | cmp -s - "$HERE/icons/VaeVictis-Dark/scalable/apps/$n.svg" || iconbad="$iconbad $n"
+done
+[ -z "$iconbad" ] && ok "launcher icons: the 1.3 drawings" || bad "launcher icons not the 1.3 drawings (run vv-branding):$iconbad"
 
 head_ "Nothing personal inside"
 leak=0
