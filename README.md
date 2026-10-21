@@ -69,11 +69,13 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
   `sudo vv-grub-password`. It must differ from your other passwords (its hash is on the unencrypted `/boot`).
 - **Boot screens:** a minimal GRUB menu and a Plymouth screen (logo, progress bar, the passphrase box with the keyboard in use).
   `Esc` shows every boot message, as before.
-- **Firewall (nftables):** incoming traffic dropped (SSH only if you switch it on), forwarding dropped except for virtual machines
+- **Firewall (nftables):** incoming traffic dropped (SSH only while it runs), forwarding dropped except for virtual machines
   (libvirt), outgoing traffic **not blocked**. `sudo nft list ruleset` shows exactly what is active.
-- **Nothing listens by default.** SSH is installed and hardened (port 2299, keys only, no root, only the `sshusers` group, fail2ban)
-  but switched off. fail2ban watches it once enabled.
-- **Hardened kernel settings** (`vv-secure`): hidden kernel pointers, restricted `dmesg`/BPF/ptrace, no core dumps, protected
+- **Nothing listens by default.** SSH is installed and hardened (port 2299, ed25519 keys only, no root, only the `sshusers`
+  group, no sftp, post-quantum key exchange first, fail2ban) but switched off. The firewall opens its port only while it runs,
+  with at most 4 new connections a minute from one address.
+- **Hardened kernel settings** (`vv-secure`): strict reverse-path filter (packets with a source address that could not
+  come from that network are dropped), hidden kernel pointers, restricted `dmesg`/BPF/ptrace, no core dumps, protected
   links and FIFOs, no typing into other terminals (TIOCSTI), `io_uring` off. Hardened boot options (memory wiped on allocation and free, `slab_nomerge`, IPv6 off...) are on in the live
   session and offered by the installer (default: yes). A "compatibility" live boot entry switches the extra hardening off if your
   hardware has trouble.

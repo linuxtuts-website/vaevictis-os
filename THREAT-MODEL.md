@@ -15,7 +15,7 @@ updates, no telemetry, and a few honest tools (VPN, password manager, snapshots)
 
 | Threat | How |
 |---|---|
-| Remote attackers scanning the internet | Nothing listens by default; incoming traffic is dropped; SSH off (and hardened + fail2ban if you turn it on) |
+| Remote attackers scanning the internet | Nothing listens by default; incoming traffic is dropped; SSH off (if you turn it on: ed25519 keys only, its port opened by the firewall only while it runs, rate limited, fail2ban) |
 | Your laptop is lost or stolen while powered off | LUKS2 on root and `/home`, encrypted swap, if you chose encryption in the installer |
 | A malicious song or image | Aurora and LinPaint+ run in a sandbox: no network, system and home read-only except the data folders, keys and browser profiles hidden, D-Bus filtered. PDFs open in Debian's viewer, outside this sandbox |
 | Someone at the keyboard changing the start options to skip the login | GRUB password: starting needs none, editing the entries or the GRUB console does |

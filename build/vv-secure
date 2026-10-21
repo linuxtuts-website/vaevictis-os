@@ -102,9 +102,13 @@ net.ipv4.icmp_echo_ignore_all = 1
 net.ipv4.ip_forward = 0
 -net.ipv6.conf.all.forwarding = 0
 
-# Drop packets whose source address could not come from the interface they arrived on (spoofing)
+# Drop packets whose source address could not come from the interface they arrived on (spoofing), strict mode.
+# systemd's 50-default.conf sets every interface to 2 (loose) with "net.ipv4.conf.*.rp_filter"; the kernel uses the
+# higher of "all" and the interface, so the same pattern is needed here (a later file wins for the same pattern).
+# WireGuard (wg-quick) works with it: it sets src_valid_mark and marks its own packets.
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.*.rp_filter = 1
 
 # No ICMP redirects (they could reroute traffic through an attacker)
 net.ipv4.conf.all.accept_redirects = 0

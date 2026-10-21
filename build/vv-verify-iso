@@ -105,6 +105,18 @@ nft_conf="$(cat_of etc/nftables.conf)"
 [ "$(printf '%s\n' "$nft_conf" | grep -c 'policy drop')" = 2 ] && [ "$(printf '%s\n' "$nft_conf" | grep -c 'policy accept')" = 1 ] \
     && ok "firewall: input drop, forward drop, output accept" || bad "firewall policies are not drop/drop/accept"
 printf '%s\n' "$nft_conf" | grep -q vpn_ports && bad "old outbound port list (vpn_ports) still in the firewall" || ok "no old outbound port list"
+# 1.3: the SSH port is in the firewall only while ssh runs (set ssh_open), with a rate limit
+printf '%s\n' "$nft_conf" | grep -q 'set ssh_open' && printf '%s\n' "$nft_conf" | grep -q 'update @ssh_rate' \
+    && ! printf '%s\n' "$nft_conf" | grep -qE 'tcp dport [0-9]+ ct state new accept' \
+    && ok "firewall: SSH port open only while ssh runs, rate limited" || bad "firewall: SSH port always open or not rate limited (run vv-harden)"
+cat_of etc/systemd/system/ssh.service.d/10-vaevictis-firewall.conf | grep -q 'add element inet vv_filter ssh_open' \
+    && ok "ssh.service opens and closes its port" || bad "ssh.service does not open its port (run vv-harden)"
+sshd_conf="$(cat_of etc/ssh/sshd_config.d/10-vaevictis.conf)"
+printf '%s\n' "$sshd_conf" | grep -qx 'PubkeyAcceptedAlgorithms ssh-ed25519,sk-ssh-ed25519@openssh.com' \
+    && printf '%s\n' "$sshd_conf" | grep -qx 'Subsystem sftp /bin/false' && printf '%s\n' "$sshd_conf" | grep -q '^KexAlgorithms mlkem768x25519' \
+    && ok "sshd: ed25519 keys only, no sftp, post-quantum key exchange first" || bad "sshd drop-in is not the 1.3 one (run vv-harden)"
+cat_of etc/sysctl.d/99-vaevictis-stealth.conf | grep -qx 'net.ipv4.conf.\*.rp_filter = 1' \
+    && ok "strict rp_filter also on every interface" || bad "rp_filter: systemd's loose default (2) still wins on the interfaces (run vv-secure)"
 cat_of usr/local/bin/vaevictis_install.sh | grep -q 'systemd-cryptsetup' && ok "installer checks systemd-cryptsetup" || bad "installer has no systemd-cryptsetup guard"
 cat_of usr/local/bin/vaevictis_install.sh | grep -q 'EFI_BEFORE' && ok "installer saves the firmware boot list" || bad "installer lacks the firmware boot list check"
 cat_of usr/local/bin/vaevictis_install.sh | grep -q 'sudo_on_live' && ok "installer removes the live polkit rule" || bad "installer keeps the live polkit rule (root without password for 'user')"

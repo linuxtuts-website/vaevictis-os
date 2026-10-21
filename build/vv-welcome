@@ -164,7 +164,7 @@ def checks():
     port = ssh_port()
     for unit, label, text in (
         ("nftables", "Firewall (nftables)", "Incoming connections are dropped; outgoing traffic is allowed. See the Network tab."),
-        ("ssh", "SSH server", f"Port {port}, keys only, no root, only members of group 'sshusers' (nobody yet)."),
+        ("ssh", "SSH server", f"Port {port}, ed25519 keys only, no root, no sftp, only members of group 'sshusers' (nobody yet)."),
         ("fail2ban", "fail2ban", "Bans an address for 1 hour after 3 failed SSH logins in 10 minutes."),
     ):
         st = run("systemctl", "is-active", unit) or "unknown"
@@ -301,14 +301,17 @@ class Welcome(Gtk.Window):
         box.pack_start(lab("FIREWALL (nftables)", "h"), False, False, 0)
         box.pack_start(lab(
             f"Incoming: everything is dropped except DHCP replies, the ICMP messages "
-            f"that IPv4 needs to work, and SSH (port {port}) if you switch it on. Outgoing traffic is not blocked, so every program can reach any port or server. "
+            f"that IPv4 needs to work, and SSH (port {port}) only while it runs, at most 4 new connections a minute from one address. "
+            "Outgoing traffic is not blocked, so every program can reach any port or server. "
             "Dropped incoming packets are logged, at most 3 lines a minute.", "dim", wrap=True), False, False, 0)
         box.pack_start(lab("sudo nft list ruleset\nsudo journalctl -k | grep vv-drop", "code", selectable=True), False, False, 0)
         box.pack_start(lab("SSH", "h"), False, False, 6)
         box.pack_start(lab(
             f"Switched off by default: nothing listens on the network. When you want it, it is hardened already: port {port}, "
-            "public-key login only (no passwords, no root), only members of the group 'sshusers'. Authorize yourself, then start it:", "dim", wrap=True), False, False, 0)
-        box.pack_start(lab("sudo usermod -aG sshusers $USER\nmkdir -p ~/.ssh && nano ~/.ssh/authorized_keys\nsudo systemctl enable --now ssh        # and to turn it off again: sudo systemctl disable --now ssh", "code", selectable=True), False, False, 0)
+            "login with an ed25519 key only (no passwords, no root), no file transfer server (sftp), only members of the group 'sshusers'. "
+            "The firewall opens the port only while SSH runs. Authorize yourself, then start it:", "dim", wrap=True), False, False, 0)
+        box.pack_start(lab("# on the computer you connect from: ssh-keygen -t ed25519, then copy the .pub line here:\n"
+                           "sudo usermod -aG sshusers $USER\nmkdir -p ~/.ssh && nano ~/.ssh/authorized_keys\nsudo systemctl enable --now ssh        # and to turn it off again: sudo systemctl disable --now ssh", "code", selectable=True), False, False, 0)
         box.pack_start(lab("FAIL2BAN", "h"), False, False, 6)
         box.pack_start(lab(
             "Watches the SSH log. Three failed logins within 10 minutes ban the address for one hour, using an nftables set.", "dim", wrap=True), False, False, 0)
