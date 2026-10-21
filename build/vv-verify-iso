@@ -190,11 +190,13 @@ done
 head_ "Packages"
 for p in systemd-cryptsetup cryptsetup-initramfs console-setup ffmpegthumbnailer firefox-esr grub-efi-amd64-bin grub-pc-bin os-prober efibootmgr \
          nftables fail2ban apparmor keepassxc lynis vaevictis-aurora vaevictis-tools bubblewrap xdg-dbus-proxy xdg-user-dirs plymouth plymouth-label \
-         fonts-ibm-plex wl-clipboard wireguard-tools openresolv papirus-icon-theme gnome-shell-extension-blur-my-shell ptyxis; do
+         fonts-ibm-plex wl-clipboard wireguard-tools openresolv papirus-icon-theme gnome-shell-extension-blur-my-shell ptyxis \
+         showtime; do
     pkg_ok "$p" && ok "$p" || bad "$p is not installed"
 done
 
 pkg_ok gnome-terminal && bad "GNOME Terminal is still installed (1.3: Ptyxis is the terminal)" || ok "no GNOME Terminal (Ptyxis is the terminal)"
+pkg_ok totem && bad "Totem is still installed (1.3: Showtime is the video player)" || ok "no Totem (Showtime is the video player)"
 
 ffpol="$(cat_of etc/firefox/policies/policies.json)"
 printf '%s\n' "$ffpol" | grep -q '"DisableTelemetry": true' && printf '%s\n' "$ffpol" | grep -q '"Category": "strict"' \

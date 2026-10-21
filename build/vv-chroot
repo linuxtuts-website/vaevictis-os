@@ -318,6 +318,7 @@ cmd_pkgcheck() {
         "gstreamer1.0-plugins-ugly|MP3 and other restricted formats"
         "gstreamer1.0-libav|FFmpeg codecs for GStreamer"
         "ffmpeg|media backend of Aurora (Qt Multimedia) and Firefox"
+        "showtime|video player (1.3; Totem, GNOME's older one, stopped with an OpenGL error on a test PC with NVIDIA)"
         "## Firmware and CPU microcode"
         "intel-microcode|CPU security fixes (Intel)"
         "amd64-microcode|CPU security fixes (AMD)"

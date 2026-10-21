@@ -22,8 +22,9 @@ A Debian or Ubuntu machine with: `debootstrap`, `squashfs-tools`, `xorriso`, `mt
 2. **Audit.** `./vv-chroot audit` is a read-only report of what still needs fixing.
 3. **Apply the project's settings** (each is safe to repeat; replaced files are backed up outside the image):
    - packages the programs need: `./vv-chroot run apt-get install bubblewrap xdg-dbus-proxy xdg-user-dirs plymouth plymouth-label fonts-ibm-plex evince`
-   - the 1.3 look (Debian packages only): `./vv-chroot run apt-get install papirus-icon-theme gnome-shell-extension-blur-my-shell ptyxis`
-     and `./vv-chroot run apt-get purge gnome-terminal gnome-terminal-data` (Ptyxis is the terminal)
+   - the 1.3 look (Debian packages only): `./vv-chroot run apt-get install papirus-icon-theme gnome-shell-extension-blur-my-shell ptyxis showtime`
+     and `./vv-chroot run apt-get purge gnome-terminal gnome-terminal-data totem totem-common libtotem0` (Ptyxis is the
+     terminal, Showtime the video player; simulate first with `apt-get -s`: nothing else may be removed)
    - the Debian packages of this repository, from the repository root: `packaging/tools/build.sh`, `packaging/aurora/build.sh`
      and, only to publish it for 1.1 systems, `packaging/archive-keyring/build.sh` (they write `dist/`)
    - `./vv-secure`: kernel and system hardening, panic button, `vv-grub-password`

@@ -5,11 +5,12 @@
 A new look from GRUB onwards, the VPN helper checked twice, and SSH and the firewall tightened. Debian 13 underneath, as
 before. For systems installed from 1.1 or 1.2, the same changes come as three packages: [docs/UPDATING.md](docs/UPDATING.md).
 
-- **Look** (Debian packages and settings only): the VaeVictis-Dark icons (folders and apps drawn for VaeVictis) on top of
-  Papirus-Dark; GNOME's dark style; Blur my Shell (the wallpaper behind the overview); Ptyxis is the terminal (GNOME
-  Terminal is gone); the boot menu with a large countdown, a violet bar and the dots of the wallpaper; the installer sets
-  the boot screens to the monitor's own resolution (they looked enlarged on some NVIDIA cards). The disk passphrase screen
-  is unchanged.
+- **Look** (Debian packages and settings only): the VaeVictis-Dark icons (folders and apps drawn for VaeVictis) on top
+  of Papirus-Dark; GNOME's dark style; Blur my Shell (the wallpaper behind the overview); Ptyxis is the terminal
+  (GNOME Terminal is gone); Showtime, GNOME's newer video player, replaces Totem (on a test PC with an NVIDIA card
+  Totem stopped with an OpenGL error); the boot menu with a large countdown, a violet bar and the dots of the
+  wallpaper; the installer sets the boot screens to the monitor's own resolution (they looked enlarged on some NVIDIA
+  cards). The disk passphrase screen is unchanged.
 - **VPN helper:** every value of the copy that WireGuard reads is written again in its standard form, never copied
   from the file; IPv6 scope IDs are refused (1.2 copied an Address like `fe80::1%...` as it was: wg-quick does not run
   it, and only with IPv6 switched back on, but the copy was meant to hold checked values only); `ListenPort` is left

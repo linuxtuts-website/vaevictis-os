@@ -100,7 +100,7 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
   window resizing).
 - **A familiar desktop:** GNOME 48 with the **Dash to Dock** extension (a dock to start and switch apps), **Blur my Shell**
   (the wallpaper behind the overview) and the standard GNOME extensions, GNOME's dark style, the **VaeVictis-Dark** icons
-  (folders and apps drawn for VaeVictis, on top of Papirus-Dark), **Ptyxis** as the terminal, plus the usual GNOME apps
+  (folders and apps drawn for VaeVictis, on top of Papirus-Dark), **Ptyxis** as the terminal, **Showtime** for videos, plus the usual GNOME apps
   (Files, Calendar, Maps, Weather, Disks, Text Editor and others).
 - **The whole software list, from the image itself:** every release carries `PACKAGES.txt`, the name and version of each package in
   the ISO (1507 for 1.0), so you can read exactly what is installed before you boot it.
