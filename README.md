@@ -3,10 +3,11 @@
 A hardened **Debian 13 (trixie)** desktop for people who want to switch to Linux and protect their data better.
 Live USB, graphical desktop (GNOME), disk-encrypting installer. Free, open, and honest about what it does and does not do.
 
-**Status: 1.2, the current version.** Debian keeps the system updated; our own tools get fixes when needed, best effort (see below). Download page: <https://vaevictisos.org/>
+**Status: 1.3, the current version.** Debian keeps the system updated; our own tools get fixes when needed, best effort (see below). Download page: <https://vaevictisos.org/>
 
-**Installed 1.1?** The VaeVictis APT repository is closed. Install the last fixes, which also remove the repository from
-your system, from the [1.2 release](https://github.com/linuxtuts-website/vaevictis-os/releases/tag/v1.2): one command, in [docs/UPDATING.md](docs/UPDATING.md).
+**Installed 1.1 or 1.2?** What 1.3 brings comes as three packages in the
+[1.3 release](https://github.com/linuxtuts-website/vaevictis-os/releases/tag/v1.3): one command, in [docs/UPDATING.md](docs/UPDATING.md)
+(which also tells 1.1 systems how to remove the closed APT repository).
 
 > **Before you download: what VaeVictis is, and what it is not**
 >
@@ -67,8 +68,8 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
 - **Boot menu password (GRUB), always set by the installer:** VaeVictis starts normally without it; it is asked only to change the
   start options or open the GRUB console, which could otherwise skip your login. Username `grub`; change it with
   `sudo vv-grub-password`. It must differ from your other passwords (its hash is on the unencrypted `/boot`).
-- **Boot screens:** a minimal GRUB menu and a Plymouth screen (logo, progress bar, the passphrase box with the keyboard in use).
-  `Esc` shows every boot message, as before.
+- **Boot screens:** a minimal GRUB menu with a large countdown, and a Plymouth screen (logo, progress bar, the passphrase box
+  with the keyboard in use), at the monitor's own resolution (the installer reads it). `Esc` shows every boot message, as before.
 - **Firewall (nftables):** incoming traffic dropped (SSH only while it runs), forwarding dropped except for virtual machines
   (libvirt), outgoing traffic **not blocked**. `sudo nft list ruleset` shows exactly what is active.
 - **Nothing listens by default.** SSH is installed and hardened (port 2299, ed25519 keys only, no root, only the `sshusers`
@@ -94,8 +95,10 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
 - **Virtual machines, built in:** QEMU/KVM, libvirt, `virt-manager`, and `virt-install` are preinstalled, so you can
   try other systems without installing anything. As a guest, the QEMU guest agent and the SPICE agent are included (clipboard sharing,
   window resizing).
-- **A familiar desktop:** GNOME 48 with the **Dash to Dock** extension (a dock to start and switch apps) and the standard GNOME
-  extensions, plus the usual GNOME apps (Files, Calendar, Maps, Weather, Disks, Text Editor and others).
+- **A familiar desktop:** GNOME 48 with the **Dash to Dock** extension (a dock to start and switch apps), **Blur my Shell**
+  (the wallpaper behind the overview) and the standard GNOME extensions, GNOME's dark style, the **VaeVictis-Dark** icons
+  (folders and apps drawn for VaeVictis, on top of Papirus-Dark), **Ptyxis** as the terminal, plus the usual GNOME apps
+  (Files, Calendar, Maps, Weather, Disks, Text Editor and others).
 - **The whole software list, from the image itself:** every release carries `PACKAGES.txt`, the name and version of each package in
   the ISO (1507 for 1.0), so you can read exactly what is installed before you boot it.
 - **Simple desktop apps for people coming from Windows or macOS**, so you do not need to learn heavyweight tools on day one: **Aurora** (music player) and **LinPaint+** (a Paint-style editor that also takes screenshots you can edit right away), next to LibreOffice for documents and Debian's PDF viewer. Aurora and LinPaint+ run in their sandbox, without network. (VaeVictis PDF, in 1.0 and 1.1, was removed in 1.2.)
@@ -139,7 +142,7 @@ Everything that makes the ISO is in `build/`, in plain shell and Python, readabl
 | Path | What |
 |---|---|
 | `build/` | the `vv-*` tools, installer, programs, boot screens, desktop files: all that goes into the image (keep the files together: scripts find each other next to themselves) |
-| `packaging/` | the Debian packages (`vaevictis-aurora`, `vaevictis-tools`, and the last `vaevictis-archive-keyring`, which removes the closed repository) |
+| `packaging/` | the Debian packages (`vaevictis-aurora`, `vaevictis-tools`; for systems installed from 1.1 or 1.2 `vaevictis-hardening` and `vaevictis-desktop`; and the last `vaevictis-archive-keyring`, which removes the closed repository) |
 | `tests/` | tests that run on any Linux machine (VPN helper, kill switch, sandbox) |
 | `docs/` | build guide, updating, coming from 1.0, the closed APT repository |
 | `DISCLAIMER.md` | no warranty, limitation of liability, not for critical use (English and Italian) |
