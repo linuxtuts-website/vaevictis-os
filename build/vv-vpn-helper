@@ -20,6 +20,13 @@ Least privilege (1.1)
     left out (a client does not need to listen on a port). Then a second, independent check reads the finished copy
     and the DNS lines: only the known settings and the characters of keys, addresses and numbers may appear, or nothing
     is started.
+  - (1.3, after an AI-assisted review: Argon by Google, not an independent security audit) one server per config
+    ([Peer]), with AllowedIPs; a full tunnel must name a DNS server this system can use (without one, DNS would keep
+    going to the normal DNS server, outside the tunnel); no tunnel Address that is loopback, multicast, unspecified or
+    link-local, or shorter than /8 (IPv4) or /32 (IPv6); the server's own address neither in the Address network nor
+    in AllowedIPs other than /0 (the tunnel would carry its own packets); with a full tunnel, every DNS server must be
+    reached through the tunnel once it is up (not, say, the router of the local network); no second tunnel that would take the
+    kill switch off the first, or carry all traffic like it; "down" only for a VaeVictis tunnel or a WireGuard interface.
   - wg-quick runs in a systemd sandbox: of root's powers it keeps only CAP_NET_ADMIN (configure the network),
     the whole file system is read-only, /home, /root and the system's secrets are hidden, it cannot gain new
     privileges, load modules or open network connections of its own.
@@ -50,6 +57,7 @@ WG = "/usr/bin/wg"
 NFT = "/usr/sbin/nft"
 SYSTEMD_RUN = "/usr/bin/systemd-run"
 MODPROBE = "/usr/sbin/modprobe"
+IP = "/usr/bin/ip"
 RUN_DIR = "/run/vv-vpn"                          # tmpfs: gone at reboot, like the nftables rules themselves
 RT_DIR = os.path.join(RUN_DIR, "run")            # the clean configs wg-quick reads (root only)
 EP_DIR = os.path.join(RUN_DIR, "endpoints")      # last server address of each tunnel, for a reconnect under the kill switch
@@ -178,7 +186,13 @@ def check_value(key, value):
                 raise ConfError(f"invalid {CANON[key]} (not a WireGuard key)")
         elif key == "address":
             for x in _items(value) or [""]:
-                ipaddress.ip_interface(x)
+                ifc = ipaddress.ip_interface(x)
+                ip = ifc.ip
+                if ip.is_loopback or ip.is_multicast or ip.is_unspecified or ip.is_link_local:
+                    raise ConfError(f"invalid Address '{x}' (not an address a tunnel can use)")
+                if ifc.network.prefixlen < (8 if ifc.version == 4 else 32):
+                    raise ConfError(f"invalid Address '{x}' (a network this large would take over the routing of the "
+                                    "whole computer)")
         elif key == "allowedips":
             for x in _items(value) or [""]:
                 ipaddress.ip_network(x, strict=False)
@@ -250,11 +264,15 @@ def parse_conf(text):
     peers = [items for sec, items in sections if sec == "peer"]
     if not peers:
         raise ConfError("no [Peer] section")
+    if len(peers) > 1:
+        raise ConfError(f"{len(peers)} [Peer] sections: VaeVictis VPN runs client configs with one server (one [Peer])")
     for items in peers:
         if not any(k == "publickey" for k, _ in items):
             raise ConfError("a [Peer] has no PublicKey")
         if not any(k == "endpoint" for k, _ in items):
             raise ConfError("a [Peer] has no Endpoint (the address of its server): VaeVictis VPN runs client configs only")
+        if not any(k == "allowedips" for k, _ in items):
+            raise ConfError("the [Peer] has no AllowedIPs (which traffic goes through the tunnel)")
     return sections
 
 
@@ -292,12 +310,16 @@ def full_tunnel(sections):
 
 
 def load_cache(name):
+    path = os.path.join(EP_DIR, name + ".json")
     try:
-        with open(os.path.join(EP_DIR, name + ".json")) as fh:
+        with open(path) as fh:
             raw = json.load(fh)
         return {pub: (str(ipaddress.ip_address(ip)), int(port)) for pub, (ip, port) in raw.items()
                 if KEY_RE.fullmatch(pub) and 0 < int(port) < 65536}
+    except FileNotFoundError:
+        return {}
     except (OSError, ValueError, TypeError, AttributeError):
+        print(f"The saved server address of '{name}' is unreadable ({path}): it is not used.", file=sys.stderr)
         return {}
 
 
@@ -359,7 +381,7 @@ def second_check(text, dns, search):
 
 def runtime_conf(sections, endpoints, ipv6):
     """The text wg-quick reads, rebuilt only from checked values; plus the DNS servers and search domains."""
-    lines, dns, search, v4_addr = [], [], [], False
+    lines, dns, search, v4_addr, allowed, nets, routed = [], [], [], False, False, [], []
     for sec, items in sections:
         lines.append("[Interface]" if sec == "interface" else "[Peer]")
         pub = first(items, "publickey")
@@ -386,11 +408,32 @@ def runtime_conf(sections, endpoints, ipv6):
                     continue
                 if key == "address":
                     v4_addr = v4_addr or any(x.version == 4 for x in vals)
+                    nets += [x.network for x in vals]
+                else:
+                    allowed = True
+                    # wg-quick routes /0 with its own rules; any other network goes into the main routing table
+                    routed += [x for x in vals if x.prefixlen > 0]
                 value = ", ".join(str(x) for x in vals)
             lines.append(f"{CANON[key]} = {value}")
         lines.append("")
     if not v4_addr and not ipv6:
         raise ConfError("the config has only IPv6 addresses, and IPv6 is off on this system")
+    if not allowed:
+        raise ConfError("no AllowedIPs this system can use (only IPv6 ones, and IPv6 is off): no traffic would go "
+                        "through the tunnel")
+    if full_tunnel(sections) and not dns:
+        raise ConfError("the config has no DNS server this system can use (DNS = ...): DNS queries would keep going to "
+                        "your normal DNS server, outside the tunnel. Use the config file your provider gives, with its "
+                        "DNS line")
+    for ip, _port in endpoints.values():
+        if any(ipaddress.ip_address(ip) in n for n in nets):
+            raise ConfError(f"the server's address {ip} is inside the tunnel's own Address: the tunnel would send "
+                            "its own packets into itself")
+        inside = [n for n in routed if ipaddress.ip_address(ip) in n]
+        if inside:
+            raise ConfError(f"the server's address {ip} is inside AllowedIPs {inside[0]}: the tunnel would send "
+                            "its own packets into itself (wg-quick adds no separate route for the server). "
+                            "For all traffic use AllowedIPs = 0.0.0.0/0")
     text = "\n".join(lines)
     second_check(text, dns, search)
     return text, dns, search
@@ -526,8 +569,61 @@ def ks_on(name):
 
 
 # ---- commands --------------------------------------------------------------------------------------------------
+def wg_interfaces():
+    """The WireGuard interfaces that are up now (whatever started them)."""
+    try:
+        r = subprocess.run([WG, "show", "interfaces"], capture_output=True, text=True)
+    except OSError:
+        return []
+    return r.stdout.split() if r.returncode == 0 else []
+
+
+def wg_full(iface):
+    """True when a WireGuard interface that is up sends all traffic of an address family through itself."""
+    try:
+        r = subprocess.run([WG, "show", iface, "allowed-ips"], capture_output=True, text=True)
+    except OSError:
+        return False
+    return r.returncode == 0 and any(x in ("0.0.0.0/0", "::/0") for x in r.stdout.split())
+
+
+def dns_outside(name, dns):
+    """The DNS servers that the routing does NOT send through the tunnel NAME (asked once the tunnel is up), for
+    example the router of the local network: with a full tunnel its own network stays outside the tunnel."""
+    out = []
+    for d in dns:
+        try:
+            r = subprocess.run([IP, "-j", "route", "get", d], capture_output=True, text=True)
+            routes = json.loads(r.stdout) if r.returncode == 0 else []
+        except (OSError, ValueError):
+            routes = []
+        if not isinstance(routes, list) or not routes or not isinstance(routes[0], dict) or routes[0].get("dev") != name:
+            out.append(d)
+    return out
+
+
+def abort_up(name, conf, guard, msg):
+    """The tunnel is up but must not be used: take it down again, nothing left behind (the kill switch stays)."""
+    sandboxed_wg_quick("down", conf)
+    try:
+        os.remove(conf)
+    except FileNotFoundError:
+        pass
+    fail(msg + ("\nThe kill switch stays on: nothing leaves this PC." if guard else ""))
+
+
 def cmd_up(name, want_ks):
+    if name in wg_interfaces():
+        fail(f"'{name}' is already connected.")
     sections = read_conf(name)
+    # Another tunnel: the kill switch would be moved off it (its traffic blocked), and two tunnels that both carry all
+    # traffic send each other's packets into themselves. A tunnel for a few networks next to the VPN is fine.
+    others = [i for i in wg_interfaces() if i != name]
+    if ks_iface() in others:
+        fail(f"The kill switch guards the tunnel '{ks_iface()}', which is up: disconnect it first.")
+    if full_tunnel(sections) and any(wg_full(i) for i in others):
+        fail(f"Another tunnel that carries all traffic is up ({', '.join(i for i in others if wg_full(i))}): "
+             "disconnect it first. Two of them cannot work at the same time.")
     ipv6 = ipv6_available()
     blocked = os.path.exists(KS_FLAG)                 # the kill switch is on now (for example a dropped tunnel)
     guard = want_ks or blocked                        # keep everything blocked while connecting
@@ -545,6 +641,8 @@ def cmd_up(name, want_ks):
     if guard and not ks_install(name, list(endpoints.values())):
         fail("Not connected: the kill switch could not be set." +
              ("\nThe previous kill switch stays on: nothing leaves this PC." if blocked else ""))
+    save_cache(name, endpoints)                       # so that "connect again" works under the kill switch, also if
+                                                      # this first attempt fails
 
     os.makedirs(RUN_DIR, mode=0o755, exist_ok=True)
     private_dir(RT_DIR)
@@ -561,10 +659,13 @@ def cmd_up(name, want_ks):
             print("Not connected. The kill switch stays on: nothing leaves this PC. Connect again, "
                   "or release the kill switch to use your normal connection.", file=sys.stderr)
         sys.exit(rc)
+    outside = dns_outside(name, dns) if full_tunnel(sections) else []
+    if outside:
+        abort_up(name, conf, guard, f"Not connected: the DNS server {', '.join(outside)} of this config is not reached "
+                 "through the tunnel (an address of your own network?): DNS would leave outside it.")
     if not set_dns(name, dns, search):
-        sandboxed_wg_quick("down", conf)
-        fail("Not connected: the DNS servers of the VPN could not be set (DNS would leave outside the tunnel)." +
-             ("\nThe kill switch stays on: nothing leaves this PC." if guard else ""))
+        abort_up(name, conf, guard, "Not connected: the DNS servers of the VPN could not be set "
+                 "(DNS would leave outside the tunnel).")
     live = live_endpoints(name)
     save_cache(name, live)
     if want_ks:
@@ -575,6 +676,8 @@ def cmd_up(name, want_ks):
 
 
 def cmd_down(name):
+    if name not in nodes() and name not in wg_interfaces():
+        fail(f"'{name}' is not a VaeVictis VPN tunnel: nothing done.")
     conf = os.path.join(RT_DIR, name + ".conf")
     if not os.path.isfile(conf):                      # brought up some other way: wg-quick only needs the name
         os.makedirs(RUN_DIR, mode=0o755, exist_ok=True)

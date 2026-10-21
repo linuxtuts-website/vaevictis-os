@@ -4,5 +4,14 @@ vaevictis-hardening (1.3.0) unstable; urgency=medium
     VaeVictis OS 1.3 for systems installed from 1.1 or 1.2. Each file is
     replaced only if it is exactly the one those images installed; the SSH
     settings wait until every authorized key is ed25519.
+  * Fixes from an AI-assisted review (Argon by Google; not an independent
+    security audit), before publication: the check of the authorized keys
+    asks sshd itself, account by account (also with Match blocks, with SSH
+    switched off and without host keys), also reads every file sshd reads
+    (Include lines followed), reads key options as sshd does, and also
+    stops for certificates, AuthorizedKeysCommand, accounts from a
+    directory service and key files root cannot read; ssh.service
+    starts after nftables; the XMAS rule compares all six TCP flags; a
+    locally changed SSH port drop-in leaves the whole firewall alone.
 
  -- linuxtuts-website <292920559+linuxtuts-website@users.noreply.github.com>  Wed, 21 Oct 2026 09:00:00 +0200

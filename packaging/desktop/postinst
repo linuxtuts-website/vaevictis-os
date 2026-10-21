@@ -51,7 +51,25 @@ gtk-update-icon-cache -q -f -t /usr/share/icons/VaeVictis-Dark 2>/dev/null || tr
 
 # ---- boot menu and boot screen resolution
 T=/boot/grub/themes/vaevictis
-if [ -f "$T/theme.txt" ] && { [ "$(sum "$T/theme.txt")" = "$K_THEME" ] || [ "$(sum "$T/theme.txt")" = "$(sum "$P/grub-theme/theme.txt")" ]; }; then
+same_theme() {   # every file of the 1.3 boot menu is already in place, in both copies
+    for f in "$P/grub-theme/"*; do
+        cmp -s "$f" "$T/${f##*/}" && cmp -s "$f" "/usr/share/vaevictis/grub-theme/${f##*/}" || return 1
+    done
+}
+own_setting() {  # a resolution or boot screen mode the user set: GRUB_GFXMODE (other than auto) in /etc/default/grub,
+                 # GRUB_GFXPAYLOAD_LINUX there, or either one in another file of /etc/default/grub.d
+    re='^[[:space:]]*(export[[:space:]]+)?GRUB_GFX(MODE|PAYLOAD_LINUX)='
+    for f in /etc/default/grub.d/*.cfg; do
+        [ -f "$f" ] && [ "$f" != "$RES" ] && grep -Eqs "$re" "$f" && return 0
+    done
+    grep -Eqs '^[[:space:]]*(export[[:space:]]+)?GRUB_GFXPAYLOAD_LINUX=' /etc/default/grub && return 0
+    own=$(sed -En 's/^[[:space:]]*(export[[:space:]]+)?GRUB_GFXMODE=//p' /etc/default/grub 2>/dev/null | tail -n1 | tr -d "\"' ")
+    [ -n "$own" ] && [ "$own" != auto ]
+}
+RES=/etc/default/grub.d/zz-vaevictis-resolution.cfg
+if [ -f "$T/theme.txt" ] && same_theme; then
+    say "boot menu: already the 1.3 one"
+elif [ -f "$T/theme.txt" ] && { [ "$(sum "$T/theme.txt")" = "$K_THEME" ] || [ "$(sum "$T/theme.txt")" = "$(sum "$P/grub-theme/theme.txt")" ]; }; then
     bk="$STATE/backup/$(date +%Y%m%d-%H%M%S)"
     install -d -m 0700 "$bk"
     cp -a "$T" "$bk/boot-grub-theme"
@@ -61,14 +79,14 @@ if [ -f "$T/theme.txt" ] && { [ "$(sum "$T/theme.txt")" = "$K_THEME" ] || [ "$(s
         install -m 0644 "$P/grub-theme/"* "$d.vaevictis-new/"
         rm -rf "$d"; mv "$d.vaevictis-new" "$d"
     done
-    own=$(sed -n 's/^GRUB_GFXMODE=//p' /etc/default/grub 2>/dev/null | tail -n1 | tr -d "\"'")
-    if grep -ls '^GRUB_GFXMODE=' /etc/default/grub.d/*.cfg 2>/dev/null | grep -qv '/zz-vaevictis-resolution\.cfg$' \
-       || { [ -n "$own" ] && [ "$own" != auto ]; }; then
-        say "boot screens: your own resolution setting (GRUB_GFXMODE) is kept"
+    if [ -e "$RES" ]; then
+        say "boot screens: $RES is already there: kept as it is"
+    elif own_setting; then
+        say "boot screens: your own setting (GRUB_GFXMODE or GRUB_GFXPAYLOAD_LINUX) is kept"
     elif MODE=$(native_mode); then
         install -d -m 0755 /etc/default/grub.d
         printf '# VaeVictis (vaevictis-desktop): boot screens at the resolution of the monitor found (%s), GRUB'"'"'s own\n# choice if the firmware cannot show it. To go back to GRUB'"'"'s choice: delete this file and run  sudo update-grub\nGRUB_GFXMODE="%s,auto"\nGRUB_GFXPAYLOAD_LINUX=keep\n' \
-            "$MODE" "$MODE" > /etc/default/grub.d/zz-vaevictis-resolution.cfg
+            "$MODE" "$MODE" > "$RES"
         say "boot screens: $MODE (the monitor's own resolution)"
     fi
     if command -v update-grub >/dev/null 2>&1 && update-grub >/dev/null 2>&1; then

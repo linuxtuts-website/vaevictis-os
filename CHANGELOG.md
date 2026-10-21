@@ -10,13 +10,22 @@ before. For systems installed from 1.1 or 1.2, the same changes come as three pa
   Terminal is gone); the boot menu with a large countdown, a violet bar and the dots of the wallpaper; the installer sets
   the boot screens to the monitor's own resolution (they looked enlarged on some NVIDIA cards). The disk passphrase screen
   is unchanged.
-- **VPN helper:** every value of the copy that WireGuard reads is written again in its standard form, never copied from the
-  file; IPv6 scope IDs are refused (1.2 copied an Address like `fe80::1%...` as it was: wg-quick does not run it, and only
-  with IPv6 switched back on, but the copy was meant to hold checked values only); `ListenPort` is left out; a second check,
-  independent of the parser, reads the finished copy and starts nothing if anything unexpected is in it. Tested with 60,000
-  random hostile edits of real provider configs. The VPN window has the VaeVictis colours and a dark title bar.
+- **VPN helper:** every value of the copy that WireGuard reads is written again in its standard form, never copied
+  from the file; IPv6 scope IDs are refused (1.2 copied an Address like `fe80::1%...` as it was: wg-quick does not run
+  it, and only with IPv6 switched back on, but the copy was meant to hold checked values only); `ListenPort` is left
+  out; a second check, independent of the parser, reads the finished copy and starts nothing if anything unexpected is
+  in it. Tested with 60,000 random hostile edits of real provider configs. After an AI-assisted review (Argon by
+  Google; not an independent security audit), also: one server per config (`[Peer]`), with `AllowedIPs`; a config that
+  sends all traffic through the tunnel must name a DNS server, and once the tunnel is up that server must be reached
+  through it (1.2 accepted a config without a `DNS` line, and DNS then kept going to the DNS server the system already
+  had: outside the tunnel when that is the router, as it usually is; the same for a `DNS` line naming an address of
+  the local network); tunnel addresses that would take over the computer's routing are refused, and so is a server
+  whose address is inside the tunnel's own networks; a second tunnel is refused when it would take the kill switch off
+  the first one or, like it, carry all traffic; after a failed first attempt, "connect again" also works under the
+  kill switch with a server given by name. The VPN window has the VaeVictis colours and a dark title bar.
 - **SSH** (still off by default): ed25519 keys only, no RSA; no sftp; post-quantum key exchange first (ML-KEM and sntrup
-  hybrids, X25519 for older clients); `MaxStartups 3:50:10`.
+  hybrids, X25519 for older clients); at most 3 connections waiting for login from one address (`PerSourceMaxStartups 3`,
+  `MaxStartups 10:30:60`).
 - **Firewall:** the SSH port is open only while SSH runs; at most 4 new SSH connections a minute from one address; TCP flag
   combinations no connection uses are dropped; a commented line to allow SSH from your own network only.
 - **Kernel:** the strict reverse-path filter now applies to the VPN tunnel, the virtual networks and any connection

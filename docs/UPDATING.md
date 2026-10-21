@@ -23,21 +23,23 @@ sudo apt install ./vaevictis-tools_1.4.0_all.deb ./vaevictis-hardening_1.3.0_all
 
 Then log out and back in. Read what they print: each one says what it changed and what it left alone.
 
-- **`vaevictis-tools` 1.4.0**: the VPN helper fix of 1.3 (every value of the copy WireGuard reads written again and checked
-  a second time) and the VPN window in the VaeVictis colours. Same rules as before: a copy is replaced only if it is exactly
+- **`vaevictis-tools` 1.4.0**: the VPN helper fixes of 1.3 (every value of the copy WireGuard reads written again and
+  checked a second time; one server per config; a config that sends all traffic through the tunnel must have a DNS server reached
+  through it)
+  and the VPN window in the VaeVictis colours. Same rules as before: a copy is replaced only if it is exactly
   a version VaeVictis shipped.
 - **`vaevictis-hardening` 1.3.0**: the SSH, firewall, kernel and Firefox settings of 1.3, each file replaced only if it is
   exactly the one the 1.1 or 1.2 image installed (a file you changed is left alone, with a message):
   SSH accepts **ed25519 keys only** (no RSA), without sftp, post-quantum key exchange first; the firewall opens the SSH port
   only while SSH runs, at most 4 new SSH connections a minute from one address; the strict reverse-path filter applies
   to the VPN tunnel and the virtual networks (NetworkManager keeps the connection to the internet loose, on purpose); Firefox gets the system policies, only if it has none. **If any authorized key on the computer is not ed25519,
-  the SSH settings are not changed**, so nobody is locked out: make an ed25519 key on the computer you connect from
+  the SSH settings are not changed** (nor with certificates or an `AuthorizedKeysCommand`), so nobody is locked out: make an ed25519 key on the computer you connect from
   (`ssh-keygen -t ed25519`, do not use RSA), put it in `authorized_keys` in place of the old one, then
   `sudo dpkg-reconfigure vaevictis-hardening`. Replaced files: `/var/lib/vaevictis-hardening/backup/`.
 - **`vaevictis-desktop` 1.3.0**: the look of 1.3, from Debian packages it installs (Papirus icons, Blur my Shell, Ptyxis):
   the VaeVictis-Dark icons and GNOME's dark style as defaults (a choice a user already made in Settings stays), Blur my
   Shell switched on by default, the new boot menu and the boot screens at the monitor's own resolution if the menu is still
-  the one VaeVictis installed. GNOME Terminal stays until you remove it (`sudo apt remove gnome-terminal`). Removing this
+  the one VaeVictis installed (a resolution setting of your own in `/etc/default/grub` is kept). GNOME Terminal stays until you remove it (`sudo apt remove gnome-terminal`). Removing this
   package removes the icons and the defaults; the boot menu stays.
 
 What the packages cannot change: the boot options and the partitions chosen when you installed. Those are the same in 1.3.

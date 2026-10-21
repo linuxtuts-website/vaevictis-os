@@ -3,5 +3,10 @@ vaevictis-desktop (1.3.0) unstable; urgency=medium
   * First version: the look of VaeVictis OS 1.3 for systems installed from
     1.1 or 1.2 (icons, dark style, Blur my Shell, Ptyxis, boot menu, boot
     screen resolution).
+  * Fixes from an AI-assisted review (Argon by Google; not an independent
+    security audit), before publication: a GRUB_GFXPAYLOAD_LINUX of your
+    own is kept too; an existing resolution file is never rewritten; when
+    the boot menu is already the 1.3 one, nothing is copied again and
+    update-grub does not run.
 
  -- linuxtuts-website <292920559+linuxtuts-website@users.noreply.github.com>  Wed, 21 Oct 2026 09:00:00 +0200

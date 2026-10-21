@@ -89,7 +89,8 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
   and reach D-Bus only through a filter. A malicious song or image that exploited a bug in FFmpeg, Qt, Pillow or Tk is meant to stay
   shut in there (a bug in the kernel or in bubblewrap itself could still let it out).
 - **VPN manager** (`vv-vpn`): WireGuard front-end with a kill switch and IPv6-aware configs. Works with any plain WireGuard
-  client `.conf` (tested with ProtonVPN files); configs with commands (`PostUp`...) are refused. Privileged steps ask for your
+  client `.conf` with one server, as providers give them (tested with ProtonVPN files); configs with commands (`PostUp`...)
+  are refused, and so is a config that sends all traffic through the tunnel without a DNS server reached through it. Privileged steps ask for your
   password; WireGuard itself runs in a systemd sandbox that can only configure the network. With the **kill switch** on, the firewall is set to
   block the traffic of the PC and of its virtual machines outside the tunnel, also while it reconnects or if reconnecting fails.
 - **Tools:** KeePassXC (offline password manager), mat2 (metadata cleaner), Panic Mode (cut the network and power off), Lynis,

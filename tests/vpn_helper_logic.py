@@ -62,7 +62,7 @@ refuses(in_iface("FwMark = 0x1"), "FwMark")
 h.parse_conf(in_iface("Table = auto")); ok += 1
 # client configs only: every peer has its server address (1.2)
 refuses(proton.replace("Endpoint = 185.159.157.1:51820", ""), "Endpoint")
-refuses(split + f"[Peer]\nPublicKey = {key()}\nAllowedIPs = 0.0.0.0/0\n", "Endpoint")
+refuses(split + f"[Peer]\nPublicKey = {key()}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 1.2.3.4:1\n", "one server")
 
 # rebuilt config, IPv6 off
 secs = h.parse_conf(proton)
@@ -146,6 +146,45 @@ for i in range(60000):
         check(not any(x in txt for x in ("PostUp", "ListenPort", "$", "`", ";", "%", "#")), f"hostile text in the copy: {txt!r}")
     accepted += 1
 check(accepted > 1500 and refused > 10000, f"fuzz too narrow: {accepted} accepted, {refused} refused")
+# 1.3 (Argon's review): one server per config, with AllowedIPs
+refuses(proton + f"\n[Peer]\nPublicKey = {PUB}\nAllowedIPs = 10.0.0.0/8\nEndpoint = 203.0.113.7:51820\n", "one server")
+refuses(proton + f"\n[Peer]\nPublicKey = {key()}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 203.0.113.7:51820\n", "one server")
+refuses(proton.replace("AllowedIPs = 0.0.0.0/0, ::/0", ""), "AllowedIPs")
+def rt_refuses(text, frag, v6=False, server="203.0.113.9"):
+    try:
+        sx = h.parse_conf(text)
+        h.runtime_conf(sx, {h.first(sx[1][1], "publickey"): (server, 51820)}, ipv6=v6)
+    except h.ConfError as e:
+        check(frag.lower() in str(e).lower(), f"refusal '{frag}' got '{e}'"); return
+    check(False, f"should refuse ({frag}): {text!r}")
+# AllowedIPs only IPv6 while IPv6 is off: nothing would go through the tunnel
+rt_refuses(proton.replace("AllowedIPs = 0.0.0.0/0, ::/0", "AllowedIPs = ::/0"), "no AllowedIPs")
+# a full tunnel needs a DNS server this system can use (or DNS keeps going outside the tunnel)
+rt_refuses(proton.replace("DNS = 10.2.0.1, 2a07:b944::2:1\n", ""), "no DNS server")
+rt_refuses(proton.replace("DNS = 10.2.0.1, 2a07:b944::2:1", "DNS = 2a07:b944::2:1"), "no DNS server")
+rt_refuses(proton.replace("DNS = 10.2.0.1, 2a07:b944::2:1", "DNS = vpn.example"), "no DNS server")
+sd = h.parse_conf(proton.replace("DNS = 10.2.0.1, 2a07:b944::2:1", "DNS = 2a07:b944::2:1"))
+_, d6, _ = h.runtime_conf(sd, {PUB: ("203.0.113.9", 51820)}, ipv6=True)
+check(d6 == ["2a07:b944::2:1"], "IPv6 DNS used when IPv6 is on")
+ss = h.parse_conf(split)
+_, dsp, _ = h.runtime_conf(ss, h.resolve_endpoints(ss, True, {}, False), ipv6=False)
+check(dsp == [], "a split tunnel may keep the normal DNS")
+# tunnel addresses that would take over or break this computer's routing
+for bad in ("127.0.0.2/32", "224.0.0.5/32", "0.0.0.0/32", "169.254.1.2/32", "10.0.0.2/7", "10.0.0.2/1", "10.0.0.2/0",
+            "::1/128", "ff02::1/128", "::/128", "fe80::2/64", "2001:db8::2/31", "2001:db8::2/0"):
+    refuses(proton.replace("10.2.0.2/32, 2a07:b944::2:2/128", bad), "Address")
+for good in ("10.14.0.2/16", "10.0.0.2/8", "100.64.3.4/10", "172.16.0.2/12", "10.2.0.2/32, fd00::2/32"):
+    sg = h.parse_conf(proton.replace("10.2.0.2/32, 2a07:b944::2:2/128", good))
+    h.runtime_conf(sg, {PUB: ("185.159.157.1", 51820)}, ipv6=True); ok += 1
+# the server inside the tunnel's own Address: the tunnel would route its own packets into itself
+rt_refuses(proton.replace("10.2.0.2/32", "203.0.0.2/16"), "inside the tunnel")
+rt_refuses(proton.replace("2a07:b944::2:2/128", "2001:db8:5::2/48"), "inside the tunnel", v6=True, server="2001:db8:5::9")
+rt_refuses(proton.replace("0.0.0.0/0, ::/0", "0.0.0.0/1, 128.0.0.0/1"), "inside AllowedIPs", server="185.159.157.1")
+rt_refuses(proton.replace("0.0.0.0/0, ::/0", "0.0.0.0/0, 185.159.0.0/16"), "inside AllowedIPs", server="185.159.157.1")
+sf = h.parse_conf(proton)
+h.runtime_conf(sf, {PUB: ("185.159.157.1", 51820)}, ipv6=True); ok += 1   # /0 only: wg-quick's own rules route it
+sv = h.parse_conf(proton.replace("2a07:b944::2:2/128", "2001:db8:5::2/48"))
+h.runtime_conf(sv, {PUB: ("2001:db8:5::9", 51820)}, ipv6=False); ok += 1   # IPv6 off: that Address is not used
 # 1.3: a long but valid line (a split tunnel with many networks) passes the second check too
 many = ", ".join(f"10.{i // 250}.{i % 250}.0/24" for i in range(400))
 sl = h.parse_conf(split.replace("AllowedIPs = 192.168.77.0/24", "AllowedIPs = " + many))

@@ -1,16 +1,19 @@
 #!/bin/sh
 # vaevictis-hardening: the 1.3 settings of SSH, the firewall, the kernel and Firefox, for systems installed from
-# VaeVictis OS 1.1 or 1.2. A file is replaced ONLY if it is exactly the version those images installed (or already
-# this one); a file changed locally is left alone, with a message. Replaced files are kept in
+# VaeVictis OS 1.1 or 1.2. A file is replaced ONLY if it is exactly a version VaeVictis installed (or already this one);
+# a file changed locally is left alone, with a message. Replaced files are kept in
 # /var/lib/vaevictis-hardening/backup/DATE/. Running it again (sudo dpkg-reconfigure vaevictis-hardening) is safe.
 set -e
 
 P=/usr/lib/vaevictis-hardening
 STATE=/var/lib/vaevictis-hardening
-# SHA-256 of the files the 1.1 and 1.2 images installed (the same in both)
+# SHA-256 of the files VaeVictis installed before: the 1.1 and 1.2 images (the same in both), then, where it differs,
+# the test build of 1.3 of 21 October 2026 (never published: test machines only). 1.1 and 1.2 had no SSH port drop-ins.
 K_SYSCTL=d3da466e847e83a994690d2067f47983f73d6a86c527d6151c5a1c87137bac40
-K_NFT=3926685ac7bc085336a6e653eca9d01118024f6f92b4e6ba55e16878e96b51b9
+K_NFT="3926685ac7bc085336a6e653eca9d01118024f6f92b4e6ba55e16878e96b51b9 b36ce167d33ad535f3c310594a433fcaf1b6e2ceada8a9d5bc1b4e82fd50f57d"
 K_SSHD=71672bffc9fc8455db61d1962711d5a1a0bd3116ea11b65e60da08e935c3cfbd
+K_FW=96fe1afdb6f8241618ed12557869287959084c889cbdadb65d9a99b532049d6e
+K_NS=caa0dd33896ce8e8178bf6f0923f1440aaf5fbfeec62f2a3efa6f8722b70b72b
 
 say() { echo "vaevictis-hardening: $*"; }
 sum() { sha256sum "$1" | cut -d' ' -f1; }
@@ -29,39 +32,175 @@ put() {        # put NEW TARGET MODE: replaced in one step (no moment with half 
 state() {      # state TARGET NEW [KNOWN...]: new (already this version), ours (shipped by VaeVictis), absent, other
     t=$1; n=$2; shift 2
     if [ -L "$t" ] || { [ -e "$t" ] && [ ! -f "$t" ]; }; then echo other; return 0; fi
+    d=$(dirname "$t")
+    if [ -L "$d" ] || { [ -e "$d" ] && [ ! -d "$d" ]; }; then echo other; return 0; fi
     [ -e "$t" ] || { echo absent; return 0; }
     c=$(sum "$t")
     [ "$c" = "$(sum "$n")" ] && { echo new; return 0; }
     for k in "$@"; do [ "$c" = "$k" ] && { echo ours; return 0; }; done
     echo other
 }
-key_files() {  # every authorized_keys file sshd would read: AuthorizedKeysFile as sshd sees it, for root, every
-               # account with a login shell or uid >= 1000, and every member of sshusers (whatever their home)
-    akf=$(/usr/sbin/sshd -T -C user=root,host=localhost,addr=127.0.0.1 2>/dev/null | awk '$1 == "authorizedkeysfile" { $1 = ""; print }')
-    [ -n "$akf" ] || akf=$(cat /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null \
-                           | awk 'tolower($1) == "authorizedkeysfile" { $1 = ""; print; exit }')
-    [ -n "$akf" ] || akf=".ssh/authorized_keys .ssh/authorized_keys2"
-    members=$(getent group sshusers | cut -d: -f4 | tr ',' ' ')
-    getent passwd | while IFS=: read -r u _ uid _ _ home shell; do
-        case " $members " in *" $u "*) ;; *)
-            [ "$uid" -eq 0 ] || [ "$uid" -ge 1000 ] || case "$shell" in */nologin|*/false|"") continue ;; esac ;;
-        esac
-        for p in $akf; do
-            [ "$p" = none ] && continue
-            p=$(printf '%s\n' "$p" | sed -e "s|%h|$home|g" -e "s|%u|$u|g" -e 's|%%|%|g')
-            case "$p" in /*) echo "$p" ;; *) echo "$home/$p" ;; esac
-        done
-    done | sort -u
+place() {      # place STATE NEW TARGET: puts a file whose state is new, absent or ours
+    case "$1" in
+        new) ;;
+        absent) put "$2" "$3" 0644 ;;
+        ours) backup "$3"; put "$2" "$3" 0644 ;;
+    esac
 }
-other_keys() { # every authorized key that is not ed25519 (1.3 accepts ed25519 keys only)
-    key_files | while read -r f; do
-        [ -f "$f" ] || continue
-        awk -v F="$f" '
-            /^[[:space:]]*(#|$)/ { next }
-            { t = ""
-              for (i = 1; i <= NF; i++) if ($i ~ /^(ssh-|ecdsa-|sk-)/) { t = $i; break }
-              if (t != "ssh-ed25519" && t != "sk-ssh-ed25519@openssh.com") print F ": " (t == "" ? "a key of unknown type" : t) }' "$f"
+
+# ---- SSH helpers. sshd's test modes need /run/sshd (missing while SSH is off) and a host key (a system that never
+# started SSH has none): a throwaway key is used, so the real host keys are never read or made here.
+TMPK=""
+trap 'if [ -n "$TMPK" ]; then rm -rf "$TMPK"; fi' EXIT
+sshd_test() {  # sshd_test ARGS...: sshd -t or -T (call make_tmpkey first)
+    [ -n "$TMPK" ] && [ -f "$TMPK/k" ] || return 1
+    install -d -m 0755 /run/sshd
+    /usr/sbin/sshd -h "$TMPK/k" "$@"
+}
+make_tmpkey() {
+    TMPK=$(mktemp -d)
+    ssh-keygen -q -t ed25519 -N '' -C vaevictis-test -f "$TMPK/k" >/dev/null 2>&1 || rm -f "$TMPK/k"
+}
+accounts() {   # NAME:UID:HOME of every account that might log in with SSH: uid 0 or >= 1000, a login shell, or in sshusers
+    g=$(getent group sshusers || true)
+    sgid=$(printf '%s\n' "$g" | cut -d: -f3)
+    members=$(printf '%s\n' "$g" | cut -d: -f4 | tr ',' ' ')
+    getent passwd | while IFS=: read -r u _ uid gid _ home shell; do
+        case " $members " in
+            *" $u "*) ;;
+            *) if [ -n "$sgid" ] && [ "$gid" = "$sgid" ]; then :
+               elif [ "$uid" = 0 ] || { [ "$uid" -ge 1000 ] 2>/dev/null; }; then :
+               else case "$shell" in */nologin|*/false|"") continue ;; esac
+               fi ;;
+        esac
+        printf '%s:%s:%s\n' "$u" "$uid" "$home"
     done
+}
+expand() {     # paths on stdin -> sshd's tokens %% %h %u %U expanded, relative paths from the home (VVH VVU VVI)
+    awk '{ p = $0; out = ""
+           while ((i = index(p, "%")) > 0) {
+               c = substr(p, i + 1, 1); out = out substr(p, 1, i - 1)
+               if (c == "%") out = out "%"; else if (c == "h") out = out ENVIRON["VVH"]
+               else if (c == "u") out = out ENVIRON["VVU"]; else if (c == "U") out = out ENVIRON["VVI"]; else out = out "%" c
+               p = substr(p, i + 2)
+           }
+           out = out p
+           if (substr(out, 1, 1) != "/") out = ENVIRON["VVH"] "/" out
+           print out }'
+}
+check_keys() { # check_keys FILE: every line that is not a plain ed25519 key (key options are skipped as sshd does)
+    found=$(awk -v F="$1" '
+        function past_options(s,    i, c, q) {
+            q = 0
+            for (i = 1; i <= length(s); i++) {
+                c = substr(s, i, 1)
+                if (c == "\\" && substr(s, i + 1, 1) == "\"") { i++; continue }
+                if (c == "\"") q = !q
+                else if (!q && (c == " " || c == "\t")) break
+            }
+            return i
+        }
+        /^[[:space:]]*(#|$)/ { next }
+        { line = $0; sub(/^[[:space:]]+/, "", line); opts = ""
+          split(line, w, /[ \t]+/)
+          if (w[1] !~ /^(ssh-|ecdsa-|sk-)/) {
+              e = past_options(line); opts = substr(line, 1, e - 1)
+              line = substr(line, e); sub(/^[[:space:]]+/, "", line); split(line, w, /[ \t]+/)
+          }
+          t = substr(w[1], 1, 40)
+          if (tolower(opts) ~ /(^|,)cert-authority(,|$)/) print F ", line " NR ": a certificate authority (cert-authority)"
+          else if (t !~ /^(ssh-|ecdsa-|sk-)/) print F ", line " NR ": not a key (remove the line, or put a # before it)"
+          else if (t != "ssh-ed25519" && t != "sk-ssh-ed25519@openssh.com") print F ", line " NR ": " t }' "$1") \
+        || found="$1: could not be read"
+    if [ -n "$found" ]; then printf '%s\n' "$found"; return 0; fi
+    # nothing found: the same count by ssh-keygen's own reading of the file, in case the two ever disagree
+    lines=$(grep -cvE '^[[:space:]]*(#|$)' "$1" || true)
+    eds=$(ssh-keygen -l -f "$1" 2>/dev/null | grep -cE '\((ED25519|ED25519-SK)\)$' || true)
+    [ "${eds:-0}" -ge "${lines:-0}" ] || echo "$1: ssh-keygen reads only ${eds:-0} of its ${lines:-0} keys as ed25519"
+}
+conf_files() { # (in a subshell) sshd_config and every file its Include lines name, recursively, one per line; relative
+               # names are from /etc/ssh, as sshd reads them. "!" lines: what could not be followed.
+    set +f     # the globs of Include lines are expanded here, on purpose
+    all=/etc/ssh/sshd_config; new=$all; round=0
+    while [ -n "$new" ]; do
+        round=$((round + 1))
+        if [ "$round" -gt 8 ]; then echo "!Include lines nested more than 8 deep"; break; fi
+        inc=$(printf '%s\n' "$new" | while IFS= read -r f; do
+                  if [ -f "$f" ]; then
+                      awk '{ l = $0; sub(/^[[:space:]]+/, "", l); sub(/[[:space:]]+$/, "", l)
+                             if (tolower(l) ~ /^include([[:space:]]|=)/) {
+                                 sub(/^[^[:space:]=]+[[:space:]]*=?[[:space:]]*/, "", l); print l } }' "$f"
+                  fi
+              done) || inc="!"
+        case "$inc" in *'"'*|*"'"*|"!") echo "!an Include line that cannot be read reliably"; break ;; esac
+        new=""
+        for g in $inc; do
+            case "$g" in /*) ;; *) g=/etc/ssh/$g ;; esac
+            for f in $g; do
+                [ -f "$f" ] || continue
+                case "
+$all
+" in *"
+$f
+"*) continue ;; esac
+                all="$all
+$f"
+                new="$new${new:+
+}$f"
+            done
+        done
+    done
+    printf '%s\n' "$all"
+}
+ssh_problems() { # (in a subshell) everything that could lock someone out with ed25519 keys only; nothing: safe to apply.
+    # Fail-safe: each account checked prints "+done"; a check that stops halfway (an error under set -e) is reported.
+    list=$(accounts) || true
+    case "
+$list" in *"
+root:0:"*) ;; *) echo "the account root was not found: the accounts cannot be checked"; return 0 ;; esac
+    n=$(printf '%s\n' "$list" | grep -c .) || true
+    if grep -Eqs '^[[:space:]]*passwd:.*[[:space:]](ldap|sss|winbind|nis|nisplus)([[:space:]]|$)' /etc/nsswitch.conf; then
+        echo "accounts from a directory service (/etc/nsswitch.conf): they cannot all be listed and checked"
+    fi
+    # Every config file sshd reads, and in them, anywhere (also in Match blocks that sshd -T below does not apply):
+    # AuthorizedKeysFile, AuthorizedKeysCommand and TrustedUserCAKeys. Trailing blanks (a CR) are dropped, as sshd does.
+    files=$(conf_files) || files="!"
+    printf '%s\n' "$files" | sed -n 's/^!/the SSH configuration: /p'
+    conf=$(printf '%s\n' "$files" | grep -v '^!' | while IFS= read -r f; do
+               if [ -f "$f" ]; then cat "$f"; echo; fi
+           done | awk '{ l = $0; sub(/^[[:space:]]+/, "", l); sub(/[[:space:]]+$/, "", l); k = tolower(l)
+                         if (k !~ /^(authorizedkeysfile|authorizedkeyscommand|trustedusercakeys)([[:space:]]|=)/) next
+                         v = l; sub(/^[^[:space:]=]+[[:space:]]*=?[[:space:]]*/, "", v); sub(/[[:space:]=].*$/, "", k)
+                         print k " " v }') || conf="!"
+    printf '%s\n' "$conf" | awk '$1 == "authorizedkeyscommand" && tolower($2) != "none" { print "keys come from an AuthorizedKeysCommand" }
+                                 $1 == "trustedusercakeys" && tolower($2) != "none" { print "certificates (TrustedUserCAKeys)" }
+                                 $0 == "!" { print "the SSH configuration could not be read" }' | sort -u
+    akf_conf=$(printf '%s\n' "$conf" | awk '$1 == "authorizedkeysfile" { $1 = ""; print }')
+    case "$akf_conf" in *'"'*|*"'"*) echo "an AuthorizedKeysFile line with quotes: the key files cannot be found reliably" ;; esac
+    set -f     # from here on, paths are split on blanks, never expanded as globs
+    out=$(printf '%s\n' "$list" | while IFS=: read -r u uid home; do
+        if ! cfg=$(sshd_test -T -C "user=$u,host=localhost,addr=127.0.0.1" 2>/dev/null); then
+            echo "sshd -T does not work for the account '$u': which keys it can log in with is not known"
+            echo "+done"; continue
+        fi
+        printf '%s\n' "$cfg" | awk '$1 == "authorizedkeyscommand" && $2 != "none" { print "keys come from an AuthorizedKeysCommand" }
+                                    $1 == "trustedusercakeys" && $2 != "none" { print "certificates (TrustedUserCAKeys)" }'
+        akf=$(printf '%s\n' "$cfg" | awk '$1 == "authorizedkeysfile" { $1 = ""; print }')
+        for p in $akf $akf_conf; do printf '%s\n' "$p"; done | grep -vix none \
+            | VVH="$home" VVU="$u" VVI="$uid" expand | while read -r f; do
+                if [ -f "$f" ]; then
+                    if [ -r "$f" ]; then check_keys "$f"; else echo "$f: cannot be read by root (a network home?): not checked"; fi
+                else
+                    d=${f%/*}; [ -n "$d" ] || d=/
+                    if [ -e "$d" ] && ! ls "$d" >/dev/null 2>&1; then
+                        echo "$d: cannot be read by root (a network home?): its keys cannot be checked"
+                    fi
+                fi
+            done
+        echo "+done"
+    done) || true
+    printf '%s\n' "$out" | grep -v '^+done$' | grep . | sort -u || true
+    [ "$(printf '%s\n' "$out" | grep -cx '+done')" = "$n" ] || echo "the check of the authorized keys did not finish"
 }
 
 case "$1" in
@@ -85,27 +224,32 @@ case $(state "$F" "$P/99-vaevictis-stealth.conf" "$K_SYSCTL") in
     *) say "kernel: $F is not a version VaeVictis shipped (changed locally?): left alone" ;;
 esac
 
-# ---- firewall: the SSH port only while SSH runs, rate limited
+# ---- firewall: the SSH port only while SSH runs, rate limited. The rules and the two drop-ins that fill the set
+# ssh_open go together: if any of the three was changed locally, none is touched.
 N=/etc/nftables.conf
-st=$(state "$N" "$P/nftables.conf" "$K_NFT")
+FW=/etc/systemd/system/ssh.service.d/10-vaevictis-firewall.conf
+NS=/etc/systemd/system/nftables.service.d/10-vaevictis-ssh.conf
+st=$(state "$N" "$P/nftables.conf" $K_NFT)
+st_fw=$(state "$FW" "$P/10-vaevictis-firewall.conf" "$K_FW")
+st_ns=$(state "$NS" "$P/10-vaevictis-ssh.conf" "$K_NS")
 command -v nft >/dev/null 2>&1 || st=nonft
 case "$st" in
     nonft) say "firewall: nftables is not installed: nothing changed" ;;
     absent) say "firewall: $N is not on this system: not added" ;;
     new|ours)
-        if ! nft -c -f "$P/nftables.conf" >/dev/null 2>&1; then
+        if [ "$st_fw" = other ] || [ "$st_ns" = other ]; then
+            [ "$st_fw" = other ] && say "firewall: $FW is not a version VaeVictis shipped (changed locally?)"
+            [ "$st_ns" = other ] && say "firewall: $NS is not a version VaeVictis shipped (changed locally?)"
+            say "firewall: left alone (the rules and the two SSH port drop-ins go together)"
+        elif ! nft -c -f "$P/nftables.conf" >/dev/null 2>&1; then
             say "firewall: the new rules do not pass this system's nft check: NOT changed"
+        elif [ "$st" = new ] && [ "$st_fw" = new ] && [ "$st_ns" = new ]; then
+            say "firewall: already the 1.3 settings"
         else
-            for d in ssh.service.d/10-vaevictis-firewall.conf nftables.service.d/10-vaevictis-ssh.conf; do
-                T=/etc/systemd/system/$d
-                case $(state "$T" "$P/${d##*/}") in
-                    new) ;;
-                    absent) put "$P/${d##*/}" "$T" 0644 ;;
-                    *) backup "$T"; put "$P/${d##*/}" "$T" 0644 ;;
-                esac
-            done
+            place "$st_fw" "$P/10-vaevictis-firewall.conf" "$FW"
+            place "$st_ns" "$P/10-vaevictis-ssh.conf" "$NS"
             systemctl daemon-reload 2>/dev/null || true
-            if [ "$st" = ours ]; then backup "$N"; put "$P/nftables.conf" "$N" 0644; fi
+            place "$st" "$P/nftables.conf" "$N"
             if systemctl -q is-active nftables.service 2>/dev/null; then
                 if systemctl reload nftables.service; then
                     say "firewall: SSH port open only while SSH runs, at most 4 new SSH connections a minute from one address"
@@ -128,17 +272,20 @@ case "$st" in
     absent) say "SSH: $S is not on this system: not added" ;;
     new) say "SSH: already the 1.3 settings" ;;
     ours)
-        bad=$(other_keys)
+        make_tmpkey
+        bad=$(ssh_problems) || bad="the check of the authorized keys failed"
         if [ -n "$bad" ]; then
-            say "SSH: NOT changed. 1.3 accepts ed25519 keys only, and these authorized keys are not ed25519:"
+            say "SSH: NOT changed, so that nobody is locked out. 1.3 accepts plain ed25519 keys only (no RSA, no"
+            say "  certificates), and on this system:"
             printf '%s\n' "$bad" | sed 's/^/    /'
+            say "  For a key that is not ed25519:"
             say "  1. on the computer you connect from:  ssh-keygen -t ed25519   (do not use RSA)"
             say "  2. put the new .pub line in that authorized_keys file, in place of the old key"
             say "  3. then:  sudo dpkg-reconfigure vaevictis-hardening"
+            say "  (with certificates or an AuthorizedKeysCommand, keep the SSH settings you have: nothing else to do)"
         else
             backup "$S"; put "$P/sshd-10-vaevictis.conf" "$S" 0644
-            install -d -m 0755 /run/sshd
-            if /usr/sbin/sshd -t >/dev/null 2>&1; then
+            if sshd_test -t >/dev/null 2>&1; then
                 if systemctl -q is-active ssh.service 2>/dev/null; then systemctl reload ssh.service || true; fi
                 say "SSH: ed25519 keys only, no sftp, post-quantum key exchange first (SSH is still off unless you switched it on)"
             else

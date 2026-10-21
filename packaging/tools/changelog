@@ -8,6 +8,24 @@ vaevictis-tools (1.4.0) unstable; urgency=medium
     meant to hold checked values only); ListenPort is left out (a client
     does not listen); a second check, independent of the parser, reads the
     finished copy and starts nothing if anything unexpected is in it.
+  * VPN helper, after an AI-assisted review (Argon by Google; not an
+    independent security audit): a config must have exactly one server
+    ([Peer]), with AllowedIPs this system can use (a second [Peer] with the
+    same key could replace the AllowedIPs of the first, and any extra [Peer]
+    opened the kill switch to its address); a config that sends all traffic
+    through the tunnel must name a DNS server this system can use, and once
+    the tunnel is up that server must be reached through it (without one, DNS
+    kept going to the DNS server the system already had: outside the tunnel
+    when that is the router; the same for a DNS line naming an address of the
+    local network); a tunnel Address that is loopback, multicast, link-local,
+    or wider than /8 (IPv4) or /32 (IPv6) is refused, and so is a server whose
+    address is inside the tunnel's Address or inside AllowedIPs other than
+    0.0.0.0/0 (the tunnel would carry its own packets); a second tunnel is
+    refused when it would take the kill switch off the first one or, like it,
+    carry all traffic, and so is a second "up" of a tunnel that is up; the
+    server address found on the first attempt is kept, so that "connect again"
+    works under the kill switch; "down" acts only on a VaeVictis tunnel or a
+    WireGuard interface.
   * VPN manager: the VaeVictis colours (violet, lilac, red only for
     disconnecting and errors) and a dark title bar.
   * For systems installed from 1.1 or 1.2: copies from vaevictis-tools 1.3.0

@@ -113,7 +113,13 @@ printf '%s\n' "$nft_conf" | grep -q 'set ssh_open' && printf '%s\n' "$nft_conf" 
     && ! printf '%s\n' "$nft_conf" | grep -qE 'tcp dport [0-9]+ ct state new accept' \
     && ok "firewall: SSH port open only while ssh runs, rate limited" || bad "firewall: SSH port always open or not rate limited (run vv-harden)"
 cat_of etc/systemd/system/ssh.service.d/10-vaevictis-firewall.conf | grep -q 'add element inet vv_filter ssh_open' \
-    && ok "ssh.service opens and closes its port" || bad "ssh.service does not open its port (run vv-harden)"
+    && cat_of etc/systemd/system/ssh.service.d/10-vaevictis-firewall.conf | grep -qx 'After=nftables.service' \
+    && ok "ssh.service opens and closes its port, after the firewall is loaded" || bad "ssh.service does not open its port, or not after nftables (run vv-harden)"
+cat_of etc/systemd/system/nftables.service.d/10-vaevictis-ssh.conf | grep -q 'ActiveState ssh.service' \
+    && ok "loading the firewall puts the SSH port back while ssh runs or starts" || bad "nftables drop-in is not the 1.3 one (run vv-harden)"
+printf '%s\n' "$nft_conf" | grep -qx '        tcp flags & (fin|syn|rst|psh|ack|urg) == fin|psh|urg drop' \
+    && ! printf '%s\n' "$nft_conf" | grep -q 'tcp flags & (fin|psh|urg) ==' \
+    && ok "firewall: XMAS packets dropped, all six flags compared" || bad "firewall: the XMAS rule is not the 1.3 one (run vv-harden)"
 sshd_conf="$(cat_of etc/ssh/sshd_config.d/10-vaevictis.conf)"
 printf '%s\n' "$sshd_conf" | grep -qx 'PubkeyAcceptedAlgorithms ssh-ed25519,sk-ssh-ed25519@openssh.com' \
     && printf '%s\n' "$sshd_conf" | grep -qx 'Subsystem sftp /bin/false' && printf '%s\n' "$sshd_conf" | grep -q '^KexAlgorithms mlkem768x25519' \

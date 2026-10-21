@@ -12,8 +12,9 @@ Description: VaeVictis 1.3 settings for SSH, the firewall, the kernel and Firefo
  what VaeVictis shipped (a file changed locally is left alone, with a message):
  .
   - SSH (switched off by default): ed25519 keys only, no sftp, post-quantum
-    key exchange first. Not applied while any authorized key is not ed25519,
-    so nobody is locked out: the message says what to do.
+    key exchange first. Not applied while any authorized key is not ed25519
+    (or while certificates or an AuthorizedKeysCommand are used), so nobody
+    is locked out: the message says what to do.
   - firewall: the SSH port open only while SSH runs, at most 4 new SSH
     connections a minute from one address, impossible TCP flag combinations
     dropped.
