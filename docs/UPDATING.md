@@ -29,8 +29,8 @@ Then log out and back in. Read what they print: each one says what it changed an
 - **`vaevictis-hardening` 1.3.0**: the SSH, firewall, kernel and Firefox settings of 1.3, each file replaced only if it is
   exactly the one the 1.1 or 1.2 image installed (a file you changed is left alone, with a message):
   SSH accepts **ed25519 keys only** (no RSA), without sftp, post-quantum key exchange first; the firewall opens the SSH port
-  only while SSH runs, at most 4 new SSH connections a minute from one address; the strict reverse-path filter really
-  applies; Firefox gets the system policies, only if it has none. **If any authorized key on the computer is not ed25519,
+  only while SSH runs, at most 4 new SSH connections a minute from one address; the strict reverse-path filter applies
+  to the VPN tunnel and the virtual networks (NetworkManager keeps the connection to the internet loose, on purpose); Firefox gets the system policies, only if it has none. **If any authorized key on the computer is not ed25519,
   the SSH settings are not changed**, so nobody is locked out: make an ed25519 key on the computer you connect from
   (`ssh-keygen -t ed25519`, do not use RSA), put it in `authorized_keys` in place of the old one, then
   `sudo dpkg-reconfigure vaevictis-hardening`. Replaced files: `/var/lib/vaevictis-hardening/backup/`.

@@ -17,7 +17,8 @@ Description: VaeVictis 1.3 settings for SSH, the firewall, the kernel and Firefo
   - firewall: the SSH port open only while SSH runs, at most 4 new SSH
     connections a minute from one address, impossible TCP flag combinations
     dropped.
-  - kernel: the strict reverse-path filter really applied on every interface.
+  - kernel: the strict reverse-path filter on the VPN tunnel and the virtual
+    networks (NetworkManager keeps the connection to the internet loose).
   - Firefox ESR: system policies (no telemetry, no studies, strict tracking
     protection, no sponsored content), only if there are none yet.
  .

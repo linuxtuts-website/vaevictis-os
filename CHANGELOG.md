@@ -19,8 +19,11 @@ before. For systems installed from 1.1 or 1.2, the same changes come as three pa
   hybrids, X25519 for older clients); `MaxStartups 3:50:10`.
 - **Firewall:** the SSH port is open only while SSH runs; at most 4 new SSH connections a minute from one address; TCP flag
   combinations no connection uses are dropped; a commented line to allow SSH from your own network only.
-- **Kernel:** the strict reverse-path filter now really applies. 1.2 set it for "all" and "default", but systemd sets every
-  interface to loose with a pattern, and the kernel uses the higher value: it was loose in practice.
+- **Kernel:** the strict reverse-path filter now applies to the VPN tunnel, the virtual networks and any connection
+  without a default route. 1.2 set it for "all" and "default", but systemd sets every interface to loose with a pattern,
+  and the kernel uses the higher value: it was loose everywhere in practice. The connection to the internet stays loose:
+  NetworkManager sets an interface with a default route back to loose on purpose (strict would break two connections at
+  once).
 - **Firefox ESR:** system policies: no telemetry, no studies, strict tracking protection (a user can switch it back to
   Standard), no sponsored content or recommendations.
 - **Texts:** "Debian underneath, a small layer of our own, as is": the public texts say what is ours and what is Debian's,

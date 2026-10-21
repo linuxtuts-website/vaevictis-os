@@ -119,7 +119,7 @@ printf '%s\n' "$sshd_conf" | grep -qx 'PubkeyAcceptedAlgorithms ssh-ed25519,sk-s
     && printf '%s\n' "$sshd_conf" | grep -qx 'Subsystem sftp /bin/false' && printf '%s\n' "$sshd_conf" | grep -q '^KexAlgorithms mlkem768x25519' \
     && ok "sshd: ed25519 keys only, no sftp, post-quantum key exchange first" || bad "sshd drop-in is not the 1.3 one (run vv-harden)"
 cat_of etc/sysctl.d/99-vaevictis-stealth.conf | grep -qx 'net.ipv4.conf.\*.rp_filter = 1' \
-    && ok "strict rp_filter also on every interface" || bad "rp_filter: systemd's loose default (2) still wins on the interfaces (run vv-secure)"
+    && ok "rp_filter: strict on the interfaces NetworkManager does not relax" || bad "rp_filter: systemd's loose default (2) still wins on the interfaces (run vv-secure)"
 cat_of usr/local/bin/vaevictis_install.sh | grep -q 'systemd-cryptsetup' && ok "installer checks systemd-cryptsetup" || bad "installer has no systemd-cryptsetup guard"
 cat_of usr/local/bin/vaevictis_install.sh | grep -q 'zz-vaevictis-resolution.cfg' && ok "installer sets the boot screens to the monitor's resolution" \
     || bad "installer does not set the boot screen resolution (1.3)"
@@ -201,6 +201,8 @@ exists usr/share/icons/VaeVictis-Dark/icon-theme.cache && ok "VaeVictis-Dark ico
 look="$(cat_of etc/dconf/db/vaevictis.d/20-look-vaevictis)"
 printf '%s\n' "$look" | grep -qx "icon-theme='VaeVictis-Dark'" && printf '%s\n' "$look" | grep -qx "color-scheme='prefer-dark'" \
     && ok "defaults: VaeVictis-Dark icons, dark style" || bad "look defaults missing (run vv-look)"
+printf '%s\n' "$look" | grep -qx "binding='<Control><Alt>t'" && printf '%s\n' "$look" | grep -qx "command='ptyxis --new-window'" \
+    && ok "Ctrl+Alt+T opens Ptyxis" || bad "no Ctrl+Alt+T shortcut for the terminal (run vv-look)"
 cat_of etc/dconf/db/vaevictis.d/10-extensions-vaevictis | grep -q "blur-my-shell@aunetx" \
     && exists usr/share/gnome-shell/extensions/blur-my-shell@aunetx/metadata.json \
     && ok "Blur my Shell installed and switched on" || bad "Blur my Shell not installed or not switched on (vv-look, vv-branding)"

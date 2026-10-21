@@ -70,16 +70,16 @@ case "$1" in
 esac
 install -d -m 0700 "$STATE"
 
-# ---- kernel: strict reverse-path filter on every interface
+# ---- kernel: strict reverse-path filter (NetworkManager keeps an interface with a default route loose, on purpose)
 F=/etc/sysctl.d/99-vaevictis-stealth.conf
 case $(state "$F" "$P/99-vaevictis-stealth.conf" "$K_SYSCTL") in
     new) say "kernel: already the 1.3 settings" ;;
     ours)
         backup "$F"; put "$P/99-vaevictis-stealth.conf" "$F" 0644
         if systemctl restart systemd-sysctl.service 2>/dev/null; then
-            say "kernel: strict reverse-path filter on every interface (now and at every start)"
+            say "kernel: strict reverse-path filter on the VPN tunnel and virtual networks (now and at every start)"
         else
-            say "kernel: strict reverse-path filter on every interface (from the next start)"
+            say "kernel: strict reverse-path filter on the VPN tunnel and virtual networks (from the next start)"
         fi ;;
     absent) say "kernel: $F is not on this system: not added" ;;
     *) say "kernel: $F is not a version VaeVictis shipped (changed locally?): left alone" ;;

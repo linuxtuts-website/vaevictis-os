@@ -106,6 +106,9 @@ net.ipv4.ip_forward = 0
 # Drop packets whose source address could not come from the interface they arrived on (spoofing), strict mode.
 # systemd's 50-default.conf sets every interface to 2 (loose) with "net.ipv4.conf.*.rp_filter"; the kernel uses the
 # higher of "all" and the interface, so the same pattern is needed here (a later file wins for the same pattern).
+# NetworkManager sets an interface that has a default route (the one to the internet) back to 2 on purpose: strict
+# mode would drop traffic when a computer has two connections. So strict applies to the other interfaces: the VPN
+# tunnel, the virtual networks, a second card without a default route.
 # WireGuard (wg-quick) works with it: it sets src_valid_mark and marks its own packets.
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.default.rp_filter = 1

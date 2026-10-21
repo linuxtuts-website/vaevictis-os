@@ -75,10 +75,10 @@ valid only in the live session. Nothing is saved to the USB stick. The installed
 - **Nothing listens by default.** SSH is installed and hardened (port 2299, ed25519 keys only, no root, only the `sshusers`
   group, no sftp, post-quantum key exchange first, fail2ban) but switched off. The firewall opens its port only while it runs,
   with at most 4 new connections a minute from one address.
-- **Hardened kernel settings** (`vv-secure`): strict reverse-path filter (a packet is dropped if replies to its sender
-  would leave through another interface: spoofed addresses are refused. With cable and Wi-Fi connected to the same network
-  at the same time, the one not used for the internet can lose its DHCP renewals and connectivity checks: use one at a time,
-  or set it back to loose with `net.ipv4.conf.*.rp_filter = 2` in `/etc/sysctl.d/zz-local.conf`), hidden kernel pointers, restricted `dmesg`/BPF/ptrace, no core dumps, protected
+- **Hardened kernel settings** (`vv-secure`): strict reverse-path filter on the VPN tunnel, the virtual networks and any
+  connection without a default route (a packet is dropped if replies to its sender would leave through another
+  interface); NetworkManager keeps the connection to the internet in loose mode on purpose, so that two connections at
+  once keep working; hidden kernel pointers, restricted `dmesg`/BPF/ptrace, no core dumps, protected
   links and FIFOs, no typing into other terminals (TIOCSTI), `io_uring` off. Hardened boot options (memory wiped on allocation and free, `slab_nomerge`, IPv6 off...) are on in the live
   session and offered by the installer (default: yes). A "compatibility" live boot entry switches the extra hardening off if your
   hardware has trouble.
