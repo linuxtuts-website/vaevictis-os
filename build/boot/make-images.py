@@ -2,7 +2,8 @@
 """make-images.py OUTDIR : the pictures of the VaeVictis boot screens (style A, minimal), drawn from the logo next to this
 file with Pillow. Same input, same output: run it again after changing a colour or a size.
 
-  OUTDIR/grub/      logo.png, select_*.png (the violet box behind the chosen menu entry, in nine pieces)
+  OUTDIR/grub/      logo.png, select_*.png (the violet box behind the chosen menu entry, in nine pieces),
+                    dots.png (violet dots fading out from the lower right corner, as on the wallpaper)
   OUTDIR/plymouth/  logo.png, field.png (passphrase box), bullet.png, track.png, accent.png
 """
 import os
@@ -30,6 +31,20 @@ def rounded(w, h, r, fill, outline=None, scale=4):
     return big.resize((w, h), Image.LANCZOS)
 
 
+def dots(w=560, h=360, step=14, r=1.5, opacity=0.9, scale=4):
+    """Violet dots on a 14 px grid, fully visible in the lower right corner and fading to nothing towards the
+    upper left (an ellipse, like the CSS radial mask of the design)."""
+    big = Image.new("RGBA", (w * scale, h * scale), (0, 0, 0, 0))
+    d = ImageDraw.Draw(big)
+    for y in range(step // 2, h, step):
+        for x in range(step // 2, w, step):
+            dist = (((w - x) / w) ** 2 + ((h - y) / h) ** 2) ** 0.5    # 0 in the corner, 1 at the far edges
+            a = round(255 * opacity * max(0.0, 1 - dist / 0.9))
+            if a:
+                d.ellipse(((x - r) * scale, (y - r) * scale, (x + r) * scale, (y + r) * scale), fill=ACCENT[:3] + (a,))
+    return big.resize((w, h), Image.LANCZOS)
+
+
 def save(img, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     img.save(path, optimize=True)
@@ -44,6 +59,7 @@ def main(out):
               "sw": (0, 2 * r), "s": (r, 2 * r), "se": (2 * r, 2 * r)}
     for name, (x, y) in pieces.items():
         save(box.crop((x, y, x + r, y + r)), f"{out}/grub/select_{name}.png")
+    save(dots(), f"{out}/grub/dots.png")
     # Plymouth: logo 120 px (the script scales it for the passphrase screen), passphrase box, bullet, 1-pixel colours
     save(logo(120), f"{out}/plymouth/logo.png")
     save(rounded(420, 48, 6, FIELD, outline=ACCENT), f"{out}/plymouth/field.png")

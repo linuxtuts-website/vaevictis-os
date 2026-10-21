@@ -66,9 +66,10 @@ grub-mkfont -r $R -n "VV Mono"        -s 17 -o $G/vv-mono-17.pf2        $F/IBMPl
 grub-mkfont -r $R -n "VV Mono Medium" -s 17 -o $G/vv-mono-medium-17.pf2 $F/IBMPlexMono-Medium.ttf  2>/dev/null
 grub-mkfont -r $R -n "VV Mono"        -s 13 -o $G/vv-mono-13.pf2        $F/IBMPlexMono-Regular.ttf 2>/dev/null
 grub-mkfont -r $R -n "VV Mono"        -s 16 -o $G/vv-mono-16.pf2        $F/IBMPlexMono-Regular.ttf 2>/dev/null
+grub-mkfont -r 0x20-0x7E -n "VV Mono Light" -s 30 -o $G/vv-mono-light-30.pf2 $F/IBMPlexMono-Light.ttf 2>/dev/null
 echo "VVOK $(ls $G/*.pf2 | wc -l)"' 2>&1) || true
 printf '%s\n' "$out" | { grep -v '^VVOK' || true; } | sed 's/^/  /'
-printf '%s\n' "$out" | grep -qx 'VVOK 5' || die "making the pictures or the GRUB fonts failed (see the messages above)"
+printf '%s\n' "$out" | grep -qx 'VVOK 6' || die "making the pictures or the GRUB fonts failed (see the messages above)"
 
 echo "== GRUB theme: /usr/share/vaevictis/grub-theme"
 T="$CH/usr/share/vaevictis/grub-theme"

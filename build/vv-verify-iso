@@ -118,6 +118,8 @@ printf '%s\n' "$sshd_conf" | grep -qx 'PubkeyAcceptedAlgorithms ssh-ed25519,sk-s
 cat_of etc/sysctl.d/99-vaevictis-stealth.conf | grep -qx 'net.ipv4.conf.\*.rp_filter = 1' \
     && ok "strict rp_filter also on every interface" || bad "rp_filter: systemd's loose default (2) still wins on the interfaces (run vv-secure)"
 cat_of usr/local/bin/vaevictis_install.sh | grep -q 'systemd-cryptsetup' && ok "installer checks systemd-cryptsetup" || bad "installer has no systemd-cryptsetup guard"
+cat_of usr/local/bin/vaevictis_install.sh | grep -q 'zz-vaevictis-resolution.cfg' && ok "installer sets the boot screens to the monitor's resolution" \
+    || bad "installer does not set the boot screen resolution (1.3)"
 cat_of usr/local/bin/vaevictis_install.sh | grep -q 'EFI_BEFORE' && ok "installer saves the firmware boot list" || bad "installer lacks the firmware boot list check"
 cat_of usr/local/bin/vaevictis_install.sh | grep -q 'sudo_on_live' && ok "installer removes the live polkit rule" || bad "installer keeps the live polkit rule (root without password for 'user')"
 cat_of usr/local/bin/vaevictis_install.sh | grep -qE '^for g in .*libvirt' && bad "installer adds the user to libvirt (root without password)" || ok "installer does not add the user to libvirt"

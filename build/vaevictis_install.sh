@@ -893,6 +893,34 @@ fi
 chroot "$TARGET" env VV_NO_UPDATE=1 /usr/local/sbin/vv-grub-theme \
     || warn "GRUB theme not installed: the boot menu will use GRUB's plain look."
 
+# Boot screens at the monitor's own resolution (1.3). GRUB's "auto" can pick 1024x768 on graphics cards whose firmware
+# does not report the monitor (some NVIDIA): the menu and the passphrase screen then look enlarged until the desktop
+# starts. The preferred mode of the first connected monitor, as the kernel of this live session sees it, is tried
+# first; "auto" stays the fallback, and "keep" hands the same mode to the kernel for the passphrase screen.
+native_mode() {
+    local c m
+    for c in "${VV_DRM:-/sys/class/drm}"/card*-*; do
+        case "$c" in *-Unknown-*) continue ;; esac            # simpledrm: only the firmware's current mode
+        [ "$(cat "$c/status" 2>/dev/null)" = connected ] || continue
+        m="$(head -n1 "$c/modes" 2>/dev/null)"
+        [[ "$m" =~ ^[0-9]{3,5}x[0-9]{3,5}$ ]] || continue       # not "1920x1080i" (interlaced) or anything else
+        echo "$m"; return 0
+    done
+    return 1
+}
+if MODE="$(native_mode)"; then
+    install -d -m 0755 "$TARGET/etc/default/grub.d"
+    cat > "$TARGET/etc/default/grub.d/zz-vaevictis-resolution.cfg" <<EOF
+# VaeVictis installer: boot screens at the resolution of the monitor found during the install ($MODE), GRUB's own
+# choice if the firmware cannot show it. To go back to GRUB's choice: delete this file and run  sudo update-grub
+GRUB_GFXMODE="$MODE,auto"
+GRUB_GFXPAYLOAD_LINUX=keep
+EOF
+    echo "Boot screens: $MODE (the monitor's own resolution), GRUB's choice as fallback."
+else
+    echo "Boot screens: resolution chosen by GRUB (no monitor resolution found)."
+fi
+
 # Boot menu password (asked above): /etc/grub.d/01_vaevictis_password, picked up by update-grub below
 log "Setting the boot menu password..."
 printf '%s\n' "$GRUB_PASS" | chroot "$TARGET" /usr/local/sbin/vv-grub-password --stdin --layout "$KB_INPUT" --no-update \
