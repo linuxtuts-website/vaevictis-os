@@ -146,5 +146,10 @@ for i in range(60000):
         check(not any(x in txt for x in ("PostUp", "ListenPort", "$", "`", ";", "%", "#")), f"hostile text in the copy: {txt!r}")
     accepted += 1
 check(accepted > 1500 and refused > 10000, f"fuzz too narrow: {accepted} accepted, {refused} refused")
+# 1.3: a long but valid line (a split tunnel with many networks) passes the second check too
+many = ", ".join(f"10.{i // 250}.{i % 250}.0/24" for i in range(400))
+sl = h.parse_conf(split.replace("AllowedIPs = 192.168.77.0/24", "AllowedIPs = " + many))
+tl, _, _ = h.runtime_conf(sl, h.resolve_endpoints(sl, True, {}, False), ipv6=False)
+check(len(tl) > 5000 and "10.1.149.0/24" in tl, "long AllowedIPs line refused or cut")
 open(sys.argv[2], "w").write(h.ks_rules("proton-ch1", [("185.159.157.1", 51820)]))
 print(f"helper logic: {ok} checks passed")

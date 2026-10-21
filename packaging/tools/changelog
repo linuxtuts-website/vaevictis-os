@@ -2,7 +2,8 @@ vaevictis-tools (1.4.0) unstable; urgency=medium
 
   * VPN helper: every value of the copy that WireGuard reads is written again
     in its standard form, never copied from the file; IPv6 scope IDs ("%")
-    are refused (1.3 copied an Address like "fe80::1%..." as it was: not
+    are refused (vaevictis-tools 1.3.0 and the 1.2 image copied an Address
+    like "fe80::1%..." as it was: not
     run by wg-quick, and only with IPv6 switched back on, but the copy was
     meant to hold checked values only); ListenPort is left out (a client
     does not listen); a second check, independent of the parser, reads the

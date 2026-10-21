@@ -142,7 +142,8 @@ PermitUserEnvironment no
 LogLevel VERBOSE
 PrintMotd no
 Banner none
-MaxStartups 3:50:10
+MaxStartups 10:30:60
+PerSourceMaxStartups 3
 HostKeyAlgorithms ssh-ed25519
 # Keys: ed25519 only (ssh-keygen -t ed25519), also on a security key (sk-). No RSA.
 PubkeyAcceptedAlgorithms ssh-ed25519,sk-ssh-ed25519@openssh.com
@@ -235,7 +236,7 @@ systemctl enable vv-ssh-hostkeys.service nftables.service fail2ban.service
 echo '--- sshd -t (throwaway host key: the sealed image has none until first boot):'
 k=/tmp/vv-sshd-test-key; rm -f \$k \$k.pub; ssh-keygen -q -t ed25519 -N '' -f \$k
 /usr/sbin/sshd -t -h \$k && echo 'sshd config OK'
-/usr/sbin/sshd -T -h \$k -C user=x,host=x,addr=127.0.0.1 | grep -E '^(subsystem|pubkeyacceptedalgorithms|kexalgorithms|maxstartups) '
+/usr/sbin/sshd -T -h \$k -C user=x,host=x,addr=127.0.0.1 | grep -E '^(subsystem|pubkeyacceptedalgorithms|kexalgorithms|maxstartups|persourcemaxstartups) '
 rm -f \$k \$k.pub
 echo '--- fail2ban-client -t:'; fail2ban-client -t 2>&1 | tail -2 || true
 "

@@ -61,8 +61,10 @@ if [ -f "$T/theme.txt" ] && { [ "$(sum "$T/theme.txt")" = "$K_THEME" ] || [ "$(s
         install -m 0644 "$P/grub-theme/"* "$d.vaevictis-new/"
         rm -rf "$d"; mv "$d.vaevictis-new" "$d"
     done
-    if grep -ls '^GRUB_GFXMODE=' /etc/default/grub.d/*.cfg 2>/dev/null | grep -qv '/zz-vaevictis-resolution\.cfg$'; then
-        say "boot screens: your own resolution setting in /etc/default/grub.d is kept"
+    own=$(sed -n 's/^GRUB_GFXMODE=//p' /etc/default/grub 2>/dev/null | tail -n1 | tr -d "\"'")
+    if grep -ls '^GRUB_GFXMODE=' /etc/default/grub.d/*.cfg 2>/dev/null | grep -qv '/zz-vaevictis-resolution\.cfg$' \
+       || { [ -n "$own" ] && [ "$own" != auto ]; }; then
+        say "boot screens: your own resolution setting (GRUB_GFXMODE) is kept"
     elif MODE=$(native_mode); then
         install -d -m 0755 /etc/default/grub.d
         printf '# VaeVictis (vaevictis-desktop): boot screens at the resolution of the monitor found (%s), GRUB'"'"'s own\n# choice if the firmware cannot show it. To go back to GRUB'"'"'s choice: delete this file and run  sudo update-grub\nGRUB_GFXMODE="%s,auto"\nGRUB_GFXPAYLOAD_LINUX=keep\n' \

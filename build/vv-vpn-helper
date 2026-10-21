@@ -99,7 +99,7 @@ CANON = {"privatekey": "PrivateKey", "address": "Address", "dns": "DNS", "mtu": 
 HOOKS = ("preup", "postup", "predown", "postdown")
 # the second check (1.3): what the finished copy for wg-quick and the DNS lines may contain, whatever the parser let through
 SAFE_LINE = re.compile(r"\[(?:Interface|Peer)\]|(?:PrivateKey|PublicKey|PresharedKey|Address|AllowedIPs|Endpoint|MTU"
-                       r"|PersistentKeepalive|Table) = [A-Za-z0-9+/=.:,\[\] ]{1,4096}|")
+                       r"|PersistentKeepalive|Table) = [A-Za-z0-9+/=.:,\[\] ]{1,65536}|")      # 65536: MAX_CONF, the whole file
 SAFE_IP = re.compile(r"[0-9A-Fa-f.:]{2,45}")
 
 

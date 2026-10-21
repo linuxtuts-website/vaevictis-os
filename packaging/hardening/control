@@ -2,7 +2,7 @@ Package: vaevictis-hardening
 Version: 1.3.0
 Architecture: all
 Maintainer: linuxtuts-website <292920559+linuxtuts-website@users.noreply.github.com>
-Depends: nftables, openssh-server, systemd
+Depends: systemd
 Section: admin
 Priority: optional
 Homepage: https://vaevictisos.org
@@ -21,7 +21,8 @@ Description: VaeVictis 1.3 settings for SSH, the firewall, the kernel and Firefo
   - Firefox ESR: system policies (no telemetry, no studies, strict tracking
     protection, no sponsored content), only if there are none yet.
  .
- The replaced files are kept in /var/lib/vaevictis-hardening/backup.
+ What is not installed (an SSH server, nftables, Firefox) is skipped, never
+ installed. The replaced files are kept in /var/lib/vaevictis-hardening/backup.
  Removing this package does not restore them.
  .
  A Debian-based hobby project: its own tools are written with AI assistants
