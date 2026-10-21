@@ -229,8 +229,8 @@ bak "$CH/usr/lib/os-release"
 cat > "$CH/usr/lib/os-release" <<EOF
 PRETTY_NAME="VaeVictis OS"
 NAME="VaeVictis OS"
-VERSION_ID="1.2"
-VERSION="1.2 (Hardened)"
+VERSION_ID="1.3"
+VERSION="1.3 (Hardened)"
 VERSION_CODENAME=trixie
 ID=$OS_ID
 ID_LIKE=debian

@@ -14,7 +14,8 @@ CH="$(realpath -m "$CH")"
 VVC="$HERE/vv-chroot"
 
 die() { echo "vv-secure: $*" >&2; exit 1; }
-[ "$(id -u)" -eq 0 ] || exec sudo -E VV_CHROOT="$CH" "$0" "$@"
+# (test mode, VV_SKIP_CHROOT=1, only writes into the folder given as VV_CHROOT: no root needed)
+[ "$(id -u)" -eq 0 ] || [ -n "${VV_SKIP_CHROOT:-}" ] || exec sudo -E VV_CHROOT="$CH" "$0" "$@"
 [ -f "$CH/etc/debian_version" ] && [ "$CH" != "/" ] || die "not a Debian root filesystem: $CH"
 [ -x "$VVC" ] || [ -n "${VV_SKIP_CHROOT:-}" ] || die "vv-chroot must be next to this script ($VVC)"
 

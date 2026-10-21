@@ -1,13 +1,13 @@
 Package: vaevictis-tools
-Version: 1.3.0
+Version: 1.4.0
 Architecture: all
 Maintainer: linuxtuts-website <292920559+linuxtuts-website@users.noreply.github.com>
 Section: admin
 Priority: optional
 Homepage: https://vaevictisos.org
-Description: fixed VaeVictis tools for systems installed from VaeVictis OS 1.1
+Description: fixed VaeVictis tools for systems installed from VaeVictis OS 1.1 or 1.2
  Puts fixed versions of the VaeVictis tools in place of the copies that the
- 1.1 image installed, at the same paths: the app sandbox, the VPN manager and
+ 1.1 or 1.2 image installed, at the same paths: the app sandbox, the VPN manager and
  its helper, the VPN polkit rule, v-snap, the panic button, VaeVictis PDF and
  LinPaint+.
  .
@@ -16,5 +16,6 @@ Description: fixed VaeVictis tools for systems installed from VaeVictis OS 1.1
  not added. The replaced copies are kept in /var/lib/vaevictis-tools/backup.
  Removing this package does not restore them.
  .
- A hobby project written by AI and never audited: provided as is, without
- warranty (GPL-3.0). Part of VaeVictis OS.
+ A Debian-based hobby project: its own tools are written with AI assistants
+ and not independently audited. Provided as is, without warranty (GPL-3.0).
+ Part of VaeVictis OS.

@@ -1,0 +1,9 @@
+#!/bin/sh
+# The settings stay in place when this package is removed. Purge also deletes the backups of the old files.
+set -e
+
+if [ "$1" = "purge" ]; then
+    rm -rf /var/lib/vaevictis-hardening
+fi
+
+exit 0

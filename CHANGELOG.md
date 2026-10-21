@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.3 (2026-10)
+
+A new look from GRUB onwards, the VPN helper checked twice, and SSH and the firewall tightened. Debian 13 underneath, as
+before. For systems installed from 1.1 or 1.2, the same changes come as three packages: [docs/UPDATING.md](docs/UPDATING.md).
+
+- **Look** (Debian packages and settings only): the VaeVictis-Dark icons (folders and apps drawn for VaeVictis) on top of
+  Papirus-Dark; GNOME's dark style; Blur my Shell (the wallpaper behind the overview); Ptyxis is the terminal (GNOME
+  Terminal is gone); the boot menu with a large countdown, a violet bar and the dots of the wallpaper; the installer sets
+  the boot screens to the monitor's own resolution (they looked enlarged on some NVIDIA cards). The disk passphrase screen
+  is unchanged.
+- **VPN helper:** every value of the copy that WireGuard reads is written again in its standard form, never copied from the
+  file; IPv6 scope IDs are refused (1.2 copied an Address like `fe80::1%...` as it was: wg-quick does not run it, and only
+  with IPv6 switched back on, but the copy was meant to hold checked values only); `ListenPort` is left out; a second check,
+  independent of the parser, reads the finished copy and starts nothing if anything unexpected is in it. Tested with 60,000
+  random hostile edits of real provider configs. The VPN window has the VaeVictis colours and a dark title bar.
+- **SSH** (still off by default): ed25519 keys only, no RSA; no sftp; post-quantum key exchange first (ML-KEM and sntrup
+  hybrids, X25519 for older clients); `MaxStartups 3:50:10`.
+- **Firewall:** the SSH port is open only while SSH runs; at most 4 new SSH connections a minute from one address; TCP flag
+  combinations no connection uses are dropped; a commented line to allow SSH from your own network only.
+- **Kernel:** the strict reverse-path filter now really applies. 1.2 set it for "all" and "default", but systemd sets every
+  interface to loose with a pattern, and the kernel uses the higher value: it was loose in practice.
+- **Firefox ESR:** system policies: no telemetry, no studies, strict tracking protection (a user can switch it back to
+  Standard), no sponsored content or recommendations.
+- **Texts:** "Debian underneath, a small layer of our own, as is": the public texts say what is ours and what is Debian's,
+  with the same limits as before.
+
 ## 1.2 (2026-10-18)
 
 After 1.2, Debian keeps the system updated; VaeVictis's own tools get fixes when needed, best effort.

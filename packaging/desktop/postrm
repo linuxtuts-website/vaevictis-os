@@ -1,0 +1,19 @@
+#!/bin/sh
+# Removing this package removes its defaults (the icons go with the package files). The boot menu stays as it is.
+# Purge also deletes the backup of the previous boot menu.
+set -e
+
+case "$1" in
+    remove|purge)
+        rm -f /etc/dconf/db/vaevictis.d/20-look-vaevictis /etc/dconf/db/vaevictis.d/25-extensions-look
+        command -v dconf >/dev/null 2>&1 && dconf update || true
+        rm -f /usr/share/icons/VaeVictis-Dark/icon-theme.cache
+        rmdir /usr/share/icons/VaeVictis-Dark/scalable/places /usr/share/icons/VaeVictis-Dark/scalable/apps \
+              /usr/share/icons/VaeVictis-Dark/scalable /usr/share/icons/VaeVictis-Dark 2>/dev/null || true
+        ;;
+esac
+if [ "$1" = "purge" ]; then
+    rm -rf /var/lib/vaevictis-desktop
+fi
+
+exit 0

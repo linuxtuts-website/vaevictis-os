@@ -30,7 +30,7 @@ die() { echo "vv-boot-theme: $*" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || exec sudo -E VV_CHROOT="$CH" "$0" "$@"
 [ -f "$CH/etc/debian_version" ] && [ "$CH" != "/" ] || die "not a Debian root filesystem: $CH"
 [ -x "$VVC" ] || die "vv-chroot must be next to this script ($VVC)"
-for f in make-images.py make-wallpaper.py vaevictis-logo.png grub-theme.txt vaevictis.script vaevictis.plymouth initramfs-hook; do
+for f in make-images.py make-grub-fonts.sh make-wallpaper.py vaevictis-logo.png grub-theme.txt vaevictis.script vaevictis.plymouth initramfs-hook; do
     [ -f "$B/$f" ] || die "missing: build/boot/$f"
 done
 [ -f "$HERE/vv-grub-theme" ] || die "missing next to this script: vv-grub-theme"
@@ -51,23 +51,13 @@ echo "  MISSING:$miss"; exit 1' \
 echo "== pictures and fonts (made inside the chroot, from build/boot)"
 work="$CH/tmp/vv-boot-theme"
 rm -rf "$work"; install -d -m 0755 "$work/src"
-cp "$B/make-images.py" "$B/make-wallpaper.py" "$B/vaevictis-logo.png" "$work/src/"
+cp "$B/make-images.py" "$B/make-grub-fonts.sh" "$B/make-wallpaper.py" "$B/vaevictis-logo.png" "$work/src/"
 # (the output is kept and checked afterwards: "| grep -q" would close the pipe early, and vv-chroot, still writing,
 #  would then fail under pipefail even when everything worked)
 out=$("$VVC" run /bin/sh -c '
 set -e
 python3 -I /tmp/vv-boot-theme/src/make-images.py /tmp/vv-boot-theme/out
-F=/usr/share/fonts/truetype/ibm-plex
-R=0x20-0x7E,0xA0-0xFF,0x2190-0x2193,0x2022-0x2022,0x2026-0x2026,0x2500-0x257F
-G=/tmp/vv-boot-theme/out/grub
-# (grub-mkfont warns about OpenType features GRUB does not use: harmless, hidden)
-grub-mkfont -r $R -n "VV Sans Light"  -s 22 -o $G/vv-sans-light-22.pf2  $F/IBMPlexSans-Light.ttf   2>/dev/null
-grub-mkfont -r $R -n "VV Mono"        -s 17 -o $G/vv-mono-17.pf2        $F/IBMPlexMono-Regular.ttf 2>/dev/null
-grub-mkfont -r $R -n "VV Mono Medium" -s 17 -o $G/vv-mono-medium-17.pf2 $F/IBMPlexMono-Medium.ttf  2>/dev/null
-grub-mkfont -r $R -n "VV Mono"        -s 13 -o $G/vv-mono-13.pf2        $F/IBMPlexMono-Regular.ttf 2>/dev/null
-grub-mkfont -r $R -n "VV Mono"        -s 16 -o $G/vv-mono-16.pf2        $F/IBMPlexMono-Regular.ttf 2>/dev/null
-grub-mkfont -r 0x20-0x7E -n "VV Mono Light" -s 30 -o $G/vv-mono-light-30.pf2 $F/IBMPlexMono-Light.ttf 2>/dev/null
-echo "VVOK $(ls $G/*.pf2 | wc -l)"' 2>&1) || true
+sh /tmp/vv-boot-theme/src/make-grub-fonts.sh /usr/share/fonts/truetype/ibm-plex /tmp/vv-boot-theme/out/grub' 2>&1) || true
 printf '%s\n' "$out" | { grep -v '^VVOK' || true; } | sed 's/^/  /'
 printf '%s\n' "$out" | grep -qx 'VVOK 6' || die "making the pictures or the GRUB fonts failed (see the messages above)"
 

@@ -1,0 +1,131 @@
+#!/bin/sh
+# vaevictis-hardening: the 1.3 settings of SSH, the firewall, the kernel and Firefox, for systems installed from
+# VaeVictis OS 1.1 or 1.2. A file is replaced ONLY if it is exactly the version those images installed (or already
+# this one); a file changed locally is left alone, with a message. Replaced files are kept in
+# /var/lib/vaevictis-hardening/backup/DATE/. Running it again (sudo dpkg-reconfigure vaevictis-hardening) is safe.
+set -e
+
+P=/usr/lib/vaevictis-hardening
+STATE=/var/lib/vaevictis-hardening
+# SHA-256 of the files the 1.1 and 1.2 images installed (the same in both)
+K_SYSCTL=d3da466e847e83a994690d2067f47983f73d6a86c527d6151c5a1c87137bac40
+K_NFT=3926685ac7bc085336a6e653eca9d01118024f6f92b4e6ba55e16878e96b51b9
+K_SSHD=71672bffc9fc8455db61d1962711d5a1a0bd3116ea11b65e60da08e935c3cfbd
+
+say() { echo "vaevictis-hardening: $*"; }
+sum() { sha256sum "$1" | cut -d' ' -f1; }
+BK=""
+backup() {     # backup FILE: a copy in the backup folder of this run
+    [ -e "$1" ] || return 0
+    if [ -z "$BK" ]; then BK="$STATE/backup/$(date +%Y%m%d-%H%M%S)"; install -d -m 0700 "$BK"; fi
+    install -d -m 0700 "$BK$(dirname "$1")"
+    cp -p "$1" "$BK$1"
+}
+put() {        # put NEW TARGET MODE: replaced in one step (no moment with half a file)
+    install -d -m 0755 "$(dirname "$2")"
+    install -o root -g root -m "$3" "$1" "$2.vaevictis-new"
+    mv -f "$2.vaevictis-new" "$2"
+}
+state() {      # state TARGET NEW [KNOWN...]: new (already this version), ours (shipped by VaeVictis), absent, other
+    t=$1; n=$2; shift 2
+    if [ -L "$t" ] || { [ -e "$t" ] && [ ! -f "$t" ]; }; then echo other; return 0; fi
+    [ -e "$t" ] || { echo absent; return 0; }
+    c=$(sum "$t")
+    [ "$c" = "$(sum "$n")" ] && { echo new; return 0; }
+    for k in "$@"; do [ "$c" = "$k" ] && { echo ours; return 0; }; done
+    echo other
+}
+other_keys() { # every authorized key that is not ed25519 (1.3 accepts ed25519 keys only)
+    for f in /root/.ssh/authorized_keys /root/.ssh/authorized_keys2 /home/*/.ssh/authorized_keys /home/*/.ssh/authorized_keys2; do
+        [ -f "$f" ] || continue
+        awk -v F="$f" '
+            /^[[:space:]]*(#|$)/ { next }
+            { t = ""
+              for (i = 1; i <= NF; i++) if ($i ~ /^(ssh-|ecdsa-|sk-)/) { t = $i; break }
+              if (t != "ssh-ed25519" && t != "sk-ssh-ed25519@openssh.com") print F ": " (t == "" ? "a key of unknown type" : t) }' "$f"
+    done
+}
+
+case "$1" in
+    configure) ;;
+    *) exit 0 ;;
+esac
+install -d -m 0700 "$STATE"
+
+# ---- kernel: strict reverse-path filter on every interface
+F=/etc/sysctl.d/99-vaevictis-stealth.conf
+case $(state "$F" "$P/99-vaevictis-stealth.conf" "$K_SYSCTL") in
+    new) say "kernel: already the 1.3 settings" ;;
+    ours)
+        backup "$F"; put "$P/99-vaevictis-stealth.conf" "$F" 0644
+        if systemctl restart systemd-sysctl.service 2>/dev/null; then
+            say "kernel: strict reverse-path filter on every interface (now and at every start)"
+        else
+            say "kernel: strict reverse-path filter on every interface (from the next start)"
+        fi ;;
+    *) say "kernel: $F is not a version VaeVictis shipped (changed locally?): left alone" ;;
+esac
+
+# ---- firewall: the SSH port only while SSH runs, rate limited
+N=/etc/nftables.conf
+st=$(state "$N" "$P/nftables.conf" "$K_NFT")
+case "$st" in
+    new|ours)
+        if ! nft -c -f "$P/nftables.conf" >/dev/null 2>&1; then
+            say "firewall: the new rules do not pass this system's nft check: NOT changed"
+        else
+            for d in ssh.service.d/10-vaevictis-firewall.conf nftables.service.d/10-vaevictis-ssh.conf; do
+                T=/etc/systemd/system/$d
+                case $(state "$T" "$P/${d##*/}") in
+                    new) ;;
+                    absent) put "$P/${d##*/}" "$T" 0644 ;;
+                    *) backup "$T"; put "$P/${d##*/}" "$T" 0644 ;;
+                esac
+            done
+            systemctl daemon-reload 2>/dev/null || true
+            if [ "$st" = ours ]; then backup "$N"; put "$P/nftables.conf" "$N" 0644; fi
+            if systemctl -q is-active nftables.service 2>/dev/null; then
+                systemctl reload nftables.service || say "firewall: WARNING: reloading failed; the new rules apply at the next start"
+            fi
+            say "firewall: SSH port open only while SSH runs, at most 4 new SSH connections a minute from one address"
+        fi ;;
+    *) say "firewall: $N is not the VaeVictis one (changed locally?): left alone, with the SSH port rules" ;;
+esac
+
+# ---- SSH: ed25519 keys only, no sftp, post-quantum key exchange first
+S=/etc/ssh/sshd_config.d/10-vaevictis.conf
+case $(state "$S" "$P/sshd-10-vaevictis.conf" "$K_SSHD") in
+    new) say "SSH: already the 1.3 settings" ;;
+    ours)
+        bad=$(other_keys)
+        if [ -n "$bad" ]; then
+            say "SSH: NOT changed. 1.3 accepts ed25519 keys only, and these authorized keys are not ed25519:"
+            printf '%s\n' "$bad" | sed 's/^/    /'
+            say "  1. on the computer you connect from:  ssh-keygen -t ed25519   (do not use RSA)"
+            say "  2. put the new .pub line in that authorized_keys file, in place of the old key"
+            say "  3. then:  sudo dpkg-reconfigure vaevictis-hardening"
+        else
+            backup "$S"; put "$P/sshd-10-vaevictis.conf" "$S" 0644
+            install -d -m 0755 /run/sshd
+            if /usr/sbin/sshd -t >/dev/null 2>&1; then
+                if systemctl -q is-active ssh.service 2>/dev/null; then systemctl reload ssh.service || true; fi
+                say "SSH: ed25519 keys only, no sftp, post-quantum key exchange first (SSH is still off unless you switched it on)"
+            else
+                cp -p "$BK$S" "$S"
+                say "SSH: the new settings did not pass 'sshd -t' on this system: the old ones are back, nothing changed"
+            fi
+        fi ;;
+    *) say "SSH: $S is not a version VaeVictis shipped (changed locally?): left alone" ;;
+esac
+
+# ---- Firefox ESR: system policies, only if there are none yet
+FP=/etc/firefox/policies/policies.json
+case $(state "$FP" "$P/policies.json") in
+    new) say "Firefox: already the 1.3 policies" ;;
+    absent) put "$P/policies.json" "$FP" 0644
+        say "Firefox: no telemetry, no studies, strict tracking protection, no sponsored content (restart Firefox)" ;;
+    *) say "Firefox: $FP already exists (your own policies): left alone; the VaeVictis ones are in $P/policies.json" ;;
+esac
+
+[ -n "$BK" ] && say "previous files kept in $BK"
+exit 0

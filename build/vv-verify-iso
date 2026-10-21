@@ -146,8 +146,8 @@ cat_of etc/dconf/db/vaevictis.d/90-wallpaper-vaevictis | grep -qx "picture-uri='
     || bad "wallpaper default missing or dconf database not updated (run vv-boot-theme)"
 cat_of etc/plymouth/plymouthd.conf | grep -qx 'Theme=vaevictis' && ok "Plymouth default theme: vaevictis" || bad "Plymouth theme is not vaevictis (run vv-boot-theme)"
 grep_os="$(cat_of usr/lib/os-release)"
-printf '%s\n' "$grep_os" | grep -qx 'VERSION_ID="1.2"' && printf '%s\n' "$grep_os" | grep -q '^HOME_URL="https://vaevictisos.org"' \
-    && ok "os-release: 1.2, vaevictisos.org" || bad "os-release is not 1.2 / vaevictisos.org (run vv-branding)"
+printf '%s\n' "$grep_os" | grep -qx 'VERSION_ID="1.3"' && printf '%s\n' "$grep_os" | grep -q '^HOME_URL="https://vaevictisos.org"' \
+    && ok "os-release: 1.3, vaevictisos.org" || bad "os-release is not 1.3 / vaevictisos.org (run vv-branding)"
 # 1.2: the VaeVictis APT repository is closed: nothing of it may be in the image
 aptleft=""
 for f in etc/apt/sources.list.d/vaevictis.sources etc/apt/preferences.d/vaevictis etc/apt/keyrings/vaevictis.gpg \

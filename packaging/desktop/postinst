@@ -1,0 +1,85 @@
+#!/bin/sh
+# vaevictis-desktop: the 1.3 look for systems installed from VaeVictis OS 1.1 or 1.2. Defaults only (dconf): what a user
+# set in Settings wins. The boot menu is replaced only if it is still the one those images installed.
+# Running it again (sudo dpkg-reconfigure vaevictis-desktop) is safe.
+set -e
+
+P=/usr/lib/vaevictis-desktop
+STATE=/var/lib/vaevictis-desktop
+DB=/etc/dconf/db/vaevictis.d
+K_THEME=84dd6b53ccea41579c55e3f5e26c6a8d6c36fb1819fdadce641bb3f7bb65a348   # theme.txt of the 1.1 and 1.2 boot menu
+say() { echo "vaevictis-desktop: $*"; }
+sum() { sha256sum "$1" | cut -d' ' -f1; }
+
+native_mode() {   # the same as the 1.3 installer: preferred mode of the first connected monitor
+    for c in /sys/class/drm/card*-*; do
+        case "$c" in *-Unknown-*) continue ;; esac
+        [ "$(cat "$c/status" 2>/dev/null)" = connected ] || continue
+        m=$(head -n1 "$c/modes" 2>/dev/null)
+        if printf '%s\n' "$m" | grep -Eqx '[0-9]{3,5}x[0-9]{3,5}'; then echo "$m"; return 0; fi
+    done
+    return 1
+}
+
+case "$1" in
+    configure) ;;
+    *) exit 0 ;;
+esac
+install -d -m 0700 "$STATE"
+
+# ---- defaults: icons, dark style, Blur my Shell
+if [ -f /etc/dconf/profile/user ] && grep -q '^system-db:vaevictis' /etc/dconf/profile/user; then
+    install -d -m 0755 "$DB"
+    install -m 0644 "$P/20-look-vaevictis" "$DB/20-look-vaevictis"
+    # enabled-extensions is ONE list: the one of the image (10-extensions-vaevictis) plus Blur my Shell, in a later file
+    list=""
+    [ -f "$DB/10-extensions-vaevictis" ] && list=$(sed -n "s/^enabled-extensions=\[\(.*\)\]\$/\1/p" "$DB/10-extensions-vaevictis" | head -n1)
+    case "$list" in
+        *"'blur-my-shell@aunetx'"*) ;;
+        "") list="'blur-my-shell@aunetx'" ;;
+        *) list="$list, 'blur-my-shell@aunetx'" ;;
+    esac
+    printf '# VaeVictis 1.3 look (vaevictis-desktop): the extensions of the image plus Blur my Shell\n[org/gnome/shell]\nenabled-extensions=[%s]\n' "$list" \
+        > "$DB/25-extensions-look"
+    chmod 0644 "$DB/25-extensions-look"
+    dconf update
+    say "defaults: VaeVictis-Dark icons, dark style, Blur my Shell (users who already chose otherwise keep their choice)"
+else
+    say "defaults NOT set: this is not a VaeVictis system (no 'system-db:vaevictis' in /etc/dconf/profile/user)"
+fi
+gtk-update-icon-cache -q -f -t /usr/share/icons/VaeVictis-Dark 2>/dev/null || true
+
+# ---- boot menu and boot screen resolution
+T=/boot/grub/themes/vaevictis
+if [ -f "$T/theme.txt" ] && { [ "$(sum "$T/theme.txt")" = "$K_THEME" ] || [ "$(sum "$T/theme.txt")" = "$(sum "$P/grub-theme/theme.txt")" ]; }; then
+    bk="$STATE/backup/$(date +%Y%m%d-%H%M%S)"
+    install -d -m 0700 "$bk"
+    cp -a "$T" "$bk/boot-grub-theme"
+    [ -d /usr/share/vaevictis/grub-theme ] && cp -a /usr/share/vaevictis/grub-theme "$bk/usr-share-grub-theme"
+    for d in "$T" /usr/share/vaevictis/grub-theme; do
+        rm -rf "$d.vaevictis-new"; install -d -m 0755 "$d.vaevictis-new"
+        install -m 0644 "$P/grub-theme/"* "$d.vaevictis-new/"
+        rm -rf "$d"; mv "$d.vaevictis-new" "$d"
+    done
+    if grep -ls '^GRUB_GFXMODE=' /etc/default/grub.d/*.cfg 2>/dev/null | grep -qv '/zz-vaevictis-resolution\.cfg$'; then
+        say "boot screens: your own resolution setting in /etc/default/grub.d is kept"
+    elif MODE=$(native_mode); then
+        install -d -m 0755 /etc/default/grub.d
+        printf '# VaeVictis (vaevictis-desktop): boot screens at the resolution of the monitor found (%s), GRUB'"'"'s own\n# choice if the firmware cannot show it. To go back to GRUB'"'"'s choice: delete this file and run  sudo update-grub\nGRUB_GFXMODE="%s,auto"\nGRUB_GFXPAYLOAD_LINUX=keep\n' \
+            "$MODE" "$MODE" > /etc/default/grub.d/zz-vaevictis-resolution.cfg
+        say "boot screens: $MODE (the monitor's own resolution)"
+    fi
+    if command -v update-grub >/dev/null 2>&1 && update-grub >/dev/null 2>&1; then
+        say "boot menu: the 1.3 one (large countdown); the previous one is kept in $bk"
+    else
+        say "boot menu: files updated, but update-grub failed: run  sudo update-grub  and read its messages"
+    fi
+else
+    say "boot menu: not the one VaeVictis installed (changed locally?): left alone"
+fi
+
+if dpkg-query -W -f='${db:Status-Abbrev}' gnome-terminal 2>/dev/null | grep -q '^ii'; then
+    say "Ptyxis is installed. GNOME Terminal is still there: remove it, if you like, with  sudo apt remove gnome-terminal"
+fi
+say "log out and back in to see the new icons and Blur my Shell"
+exit 0

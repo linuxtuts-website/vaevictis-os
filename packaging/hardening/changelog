@@ -1,0 +1,8 @@
+vaevictis-hardening (1.3.0) unstable; urgency=medium
+
+  * First version: the SSH, firewall, kernel and Firefox settings of
+    VaeVictis OS 1.3 for systems installed from 1.1 or 1.2. Each file is
+    replaced only if it is exactly the one those images installed; the SSH
+    settings wait until every authorized key is ed25519.
+
+ -- linuxtuts-website <292920559+linuxtuts-website@users.noreply.github.com>  Wed, 21 Oct 2026 09:00:00 +0200

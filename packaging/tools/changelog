@@ -1,3 +1,19 @@
+vaevictis-tools (1.4.0) unstable; urgency=medium
+
+  * VPN helper: every value of the copy that WireGuard reads is written again
+    in its standard form, never copied from the file; IPv6 scope IDs ("%")
+    are refused (1.3 copied an Address like "fe80::1%..." as it was: not
+    run by wg-quick, and only with IPv6 switched back on, but the copy was
+    meant to hold checked values only); ListenPort is left out (a client
+    does not listen); a second check, independent of the parser, reads the
+    finished copy and starts nothing if anything unexpected is in it.
+  * VPN manager: the VaeVictis colours (violet, lilac, red only for
+    disconnecting and errors) and a dark title bar.
+  * For systems installed from 1.1 or 1.2: copies from vaevictis-tools 1.3.0
+    (the same as the 1.2 image) are recognised and updated.
+
+ -- linuxtuts-website <292920559+linuxtuts-website@users.noreply.github.com>  Wed, 21 Oct 2026 09:00:00 +0200
+
 vaevictis-tools (1.3.0) unstable; urgency=medium
 
   * Now also carries VaeVictis PDF and LinPaint+. Fixes found with an
