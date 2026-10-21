@@ -1,9 +1,8 @@
 # Changelog
 
-## 1.2 (2026-10-18): the final version
+## 1.2 (2026-10-18)
 
-1.2 is meant to be the last release: after it, maintenance mode only (Debian's updates, best-effort fixes of VaeVictis's own
-code if something serious is found).
+After 1.2, Debian keeps the system updated; VaeVictis's own tools get fixes when needed, best effort.
 
 - **The VaeVictis APT repository is closed.** A repository that installs software as root on other people's computers is a
   responsibility a one-person hobby project cannot carry: a lost or stolen signing key, or a forgotten monthly re-signature,
@@ -13,7 +12,7 @@ code if something serious is found).
   `vaevictis-aurora` 1.1.3, and `vaevictis-archive-keyring` 2026.10.18, which removes the repository): one command, see
   [docs/UPDATING.md](docs/UPDATING.md).
 - **VaeVictis PDF removed:** Debian's own PDF viewer is there, maintained with Debian's security updates. Less code of our
-  own, written by AI and never audited.
+  own, written with AI and not independently audited.
 - **NVIDIA driver launcher** in the menu and on the desktop: it shows the graphics cards, then installs the optional
   proprietary driver or undoes it (`vv-nvidia`, as before).
 - **Welcome window:** a line saying it is a hobby project written by AI, never audited, without warranty and not designed for

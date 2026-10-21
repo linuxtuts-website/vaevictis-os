@@ -5,8 +5,8 @@
 Security fixes are installed automatically every day (`unattended-upgrades`), and `sudo apt update && sudo apt full-upgrade`
 brings the rest up to date. You do **not** need a new ISO for this: the ISO is only the way to install the system the first time.
 
-VaeVictis has **no APT repository of its own** any more: it was closed with 1.2 ([why](APT-REPOSITORY.md)). In maintenance mode
-a fix of VaeVictis's own code, if one is ever needed, is published as a file in a release.
+VaeVictis has **no APT repository of its own** any more: it was closed with 1.2 ([why](APT-REPOSITORY.md)). A fix of
+VaeVictis's own tools, when one is needed, is published as a file in a release.
 
 ## Installed from 1.1: the last fixes, and removing the repository
 

@@ -3,17 +3,16 @@
 A hardened **Debian 13 (trixie)** desktop for people who want to switch to Linux and protect their data better.
 Live USB, graphical desktop (GNOME), disk-encrypting installer. Free, open, and honest about what it does and does not do.
 
-**Status: 1.2, the final version; maintenance mode** (see below). Download page: <https://vaevictisos.org/>
+**Status: 1.2, the current version.** Debian keeps the system updated; our own tools get fixes when needed, best effort (see below). Download page: <https://vaevictisos.org/>
 
 **Installed 1.1?** The VaeVictis APT repository is closed. Install the last fixes, which also remove the repository from
 your system, from the [1.2 release](https://github.com/linuxtuts-website/vaevictis-os/releases/tag/v1.2): one command, in [docs/UPDATING.md](docs/UPDATING.md).
 
-> **Read this first: a hobby project, with no guarantees**
+> **Before you download: what VaeVictis is, and what it is not**
 >
-> - **Hobby, non-profit.** One person makes VaeVictis in their free time, purely out of passion for Linux. No company and no income: everything is free.
-> - **Written by AI.** The maintainer is not a programmer. The project's own code (installer, tools, apps) is written entirely by AI assistants, directed and tested by the maintainer.
-> - **Never audited.** No independent security expert has checked the code: a professional audit costs thousands of euros, which a project with no income cannot pay. It was only reviewed with AI tools (Lumo 2.0 Max by Proton and Argon by Google, October 2026), which miss problems: it may contain bugs and security holes that nobody has found yet.
-> - **No guarantees.** Provided as is, without warranty of any kind. It is not designed for high-risk use: do not rely on it where your safety, your freedom or your money are at stake. You use VaeVictis at your own risk.
+> - **Debian underneath.** The kernel, the packages and the security updates come from Debian 13 and its security team.
+> - **A small layer of our own.** The installer, the VPN manager, the panic button, v-snap, Aurora and LinPaint+ are open source, written with AI assistants by a one-person hobby project, and reviewed with AI tools (Lumo 2.0 Max by Proton and Argon by Google). That is not an independent security audit.
+> - **As is, no warranty.** Free under GPL-3.0, without warranty of any kind. Not designed for high-risk use, such as people targeted by well-funded attackers. Keep backups: you use it at your own risk.
 >
 > Every protection described here is designed to reduce a risk; none is guaranteed (GPL-3.0, sections 15 and 16). Read the
 > [threat model](THREAT-MODEL.md) and keep backups. Full text, also in Italian: [DISCLAIMER.md](DISCLAIMER.md).
@@ -24,9 +23,9 @@ your system, from the [1.2 release](https://github.com/linuxtuts-website/vaevict
 > **Coming from 1.0 or 1.0.1:** what of the newer releases you can apply yourself (removing the HIDS, two kernel
 > settings) and what needs a new installation: [docs/FROM-1.0.md](docs/FROM-1.0.md).
 
-## Maintenance mode
+## Best effort, no deadlines
 
-No new features are planned. Debian's security updates keep arriving through `apt` as usual; VaeVictis's own code receives security fixes only, on a best-effort basis, with no guaranteed response time. The project may be discontinued at any time; if that happens, a notice will say so. Installed systems keep receiving Debian's updates, which do not depend on this project.
+Debian's security updates keep arriving through `apt` as usual. VaeVictis's own tools get fixes when needed, on a best-effort basis, with no guaranteed response time. The project may stop at any time; if that happens, a notice will say so. Installed systems keep receiving Debian's updates, which do not depend on this project.
 
 ## Download and verify
 

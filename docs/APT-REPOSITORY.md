@@ -14,7 +14,7 @@ carry:
   computer, a lost or stolen key, or a stolen GitHub or Cloudflare account would have reached every user;
 - the index had to be re-signed at least every 30 days (it carried an expiry date, so that an old index could not hide a fix);
   a re-signature forgotten once means an error at every `apt update` on every system;
-- in maintenance mode there is almost nothing to publish, and everything else updates from Debian anyway.
+- VaeVictis's own tools are a small layer: they rarely need a fix, and everything else updates from Debian anyway.
 
 Less to trust is better: 1.2 has no repository of its own, and a fix, if one is ever needed, is a file in a release, checked with
 the signed `SHA256SUMS` of that release.

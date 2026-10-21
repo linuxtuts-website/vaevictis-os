@@ -252,8 +252,9 @@ class Welcome(Gtk.Window):
         root.pack_start(lab("VAEVICTIS OS", "brand"), False, False, 0)
         root.pack_start(lab("Hardened live environment" if "boot=live" in (rd("/proc/cmdline", "") or "") else "Hardened desktop", "title"), False, False, 0)
         root.pack_start(lab(f"Kernel {platform.release()}  \u00b7  Debian 13  \u00b7  Stateless. Stealth. Brutal.", "sub"), False, False, 0)
-        root.pack_start(lab("A hobby project, written by AI and never audited: provided as is, without warranty. "
-                            "Not designed for high-risk use. Details: vaevictisos.org/disclaimer", "dim", wrap=True), False, False, 0)
+        root.pack_start(lab("A Debian-based hobby project: our own tools are written with AI and not independently audited. "
+                            "Provided as is, without warranty; not designed for high-risk use. Details: vaevictisos.org/disclaimer",
+                            "dim", wrap=True), False, False, 0)
 
         self.nb = Gtk.Notebook()
         root.pack_start(self.nb, True, True, 6)

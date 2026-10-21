@@ -21,8 +21,7 @@ the documented limits in [THREAT-MODEL.md](THREAT-MODEL.md).
 
 ## Supported versions
 
-Only the latest release, in **maintenance mode**: security fixes on a best-effort basis, no guaranteed response time,
-no new features. Older releases (and the HIDS of 1.0 and 1.0.1) receive no fixes. See [DISCLAIMER.md](DISCLAIMER.md).
+Only the latest release: fixes on a best-effort basis, with no guaranteed response time. Older releases (and the HIDS of 1.0 and 1.0.1) receive no fixes. See [DISCLAIMER.md](DISCLAIMER.md).
 
 ## Code review welcome
 
