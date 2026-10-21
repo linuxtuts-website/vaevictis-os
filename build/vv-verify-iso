@@ -54,8 +54,11 @@ if [ "$IS_ISO" = 1 ]; then
     grep -qw 'quiet' "$M/boot/grub/grub.cfg" && bad "grub.cfg still has quiet (boot messages hidden)" || ok "boot messages visible (no quiet)"
     if [ -f "$M/boot/grub/themes/vaevictis/theme.txt" ] && [ -f "$M/boot/grub/themes/vaevictis/logo.png" ]; then
         cmp -s "$M/boot/grub/themes/vaevictis/theme.txt" "$HERE/boot/grub-theme.txt" \
-            && ok "live menu theme: style A (same theme.txt as build/boot)" || bad "live menu theme.txt differs from build/boot/grub-theme.txt"
-        [ "$(ls "$M/boot/grub/themes/vaevictis/"*.pf2 2>/dev/null | wc -l)" = 5 ] && ok "live menu fonts (5 IBM Plex .pf2)" || bad "live menu fonts missing"
+            && ok "live menu theme: the same theme.txt as build/boot" || bad "live menu theme.txt differs from build/boot/grub-theme.txt"
+        # as many fonts as build/boot/make-grub-fonts.sh makes (6 from 1.3: the countdown has its own)
+        nf=$(grep -c '^grub-mkfont ' "$HERE/boot/make-grub-fonts.sh")
+        [ "$(ls "$M/boot/grub/themes/vaevictis/"*.pf2 2>/dev/null | wc -l)" = "$nf" ] && ok "live menu fonts ($nf IBM Plex .pf2)" \
+            || bad "live menu fonts: not the $nf that make-grub-fonts.sh makes"
         grep -q 'set theme=' "$M/boot/grub/grub.cfg" && ok "grub.cfg loads the theme" || bad "grub.cfg does not load the theme"
         grep -qw 'splash' "$M/boot/grub/grub.cfg" && ok "boot screen (splash) on the hardened entries" || bad "no splash: the boot screen is not used"
     else bad "live menu has no theme (plain text menu)"; fi
