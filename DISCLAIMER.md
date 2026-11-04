@@ -28,13 +28,13 @@ to the quality and performance of the software is with you.
 
 To the extent permitted by applicable law, the author and the contributors are **not liable for any damage**, including
 data loss, loss of privacy, security incidents, hardware damage or any other direct or indirect damage, arising from the use
-of or the inability to use VaeVictis OS, its tools, its packages, its documentation or its websites (GPL-3.0, sections 16
+of or the inability to use VaeVictis OS, its tools, its packages, its documentation or its website (GPL-3.0, sections 16
 and 17). Nothing on this page limits a liability that the law does not allow to limit.
 
 ## No security guarantee
 
-- Every protection described in this repository, in the release notes and on the project's websites (vaevictisos.org,
-  linuxtuts.online) is **designed to reduce a risk**. None of them is guaranteed to work in every case. Software has bugs,
+- Every protection described in this repository, in the release notes and on the project's website (vaevictisos.org)
+  is **designed to reduce a risk**. None of them is guaranteed to work in every case. Software has bugs,
   new attacks appear, and a configuration can be wrong.
 - The code has **not been audited by an independent third party**, and it was written entirely by AI assistants
   (see above).
@@ -65,10 +65,10 @@ older releases (and the HIDS of 1.0 and 1.0.1) receive no fixes. The project may
 
 - The system is made of Debian packages and other software, each under its own licence and without any warranty from this
   project. Services you choose to use (VPN providers, websites) are under their own terms.
-- The information in this repository and on the project's websites is **general information**, not professional security,
+- The information in this repository and on the project's website is **general information**, not professional security,
   legal or technical advice for your situation.
 
-This page may change; the version in this repository applies. Last updated: 16 October 2026.
+This page may change; the version in this repository applies. Last updated: 4 November 2026.
 
 ---
 
@@ -92,13 +92,15 @@ originale inglese.
 - **Nessuna garanzia.** Fornito così com'è, senza garanzie di alcun tipo. Non affidarti a VaeVictis dove sono in gioco la tua
   sicurezza, la tua libertà o il tuo denaro: non è progettato per usi ad alto rischio. Lo usi a tuo rischio.
 
-- **Nessuna garanzia.** VaeVictis OS è fornito **"così com'è", senza garanzie di alcun tipo**, esplicite o implicite, comprese
+## In dettaglio
+
+- **Esclusione di garanzia.** VaeVictis OS è fornito **"così com'è", senza garanzie di alcun tipo**, esplicite o implicite, comprese
   quelle di commerciabilità e di idoneità a uno scopo particolare (GPL-3.0, sezione 15). Tutto il rischio sulla qualità e sul
   funzionamento del software è a carico di chi lo usa.
 - **Limitazione di responsabilità.** Nei limiti consentiti dalla legge, l'autore e i contributori **non rispondono di alcun
   danno**, compresi perdita di dati, violazioni della riservatezza, incidenti di sicurezza, danni all'hardware o qualsiasi
   altro danno diretto o indiretto derivante dall'uso o dall'impossibilità di usare VaeVictis OS, i suoi strumenti, i suoi
-  pacchetti, la sua documentazione o i suoi siti (GPL-3.0, sezioni 16 e 17). Restano salve le responsabilità che la legge
+  pacchetti, la sua documentazione o il suo sito (GPL-3.0, sezioni 16 e 17). Restano salve le responsabilità che la legge
   non consente di escludere.
 - **Nessuna garanzia di sicurezza.** Ogni protezione descritta è **pensata per ridurre un rischio**; nessuna è garantita in
   ogni caso. Il codice non è stato verificato da terzi indipendenti ed è stato scritto interamente da assistenti di
@@ -113,7 +115,7 @@ originale inglese.
 - **Nessun obbligo di assistenza.** Progetto di una sola persona, senza obbligo di assistenza, aggiornamenti, correzioni o
   funzioni nuove e senza tempi di risposta; le correzioni arrivano solo quando possibile. È mantenuta solo l'ultima versione. Il progetto può essere interrotto in qualsiasi momento.
 - **Software di terzi e informazioni.** I pacchetti Debian e gli altri programmi hanno le proprie licenze e nessuna garanzia da
-  parte di questo progetto. Le informazioni nel repository e sui siti sono **informazioni generali**, non consulenza
+  parte di questo progetto. Le informazioni nel repository e sul sito sono **informazioni generali**, non consulenza
   professionale di sicurezza, legale o tecnica.
 
-Ultimo aggiornamento: 16 ottobre 2026.
+Questa pagina può cambiare; vale la versione in questo repository. Ultimo aggiornamento: 4 novembre 2026.
