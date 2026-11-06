@@ -1,0 +1,124 @@
+# Daily check, from outside the web server, that https://vaevictisos.org
+# shows the same ISO checksum, release key and download links as the signed
+# SHA256SUMS of the latest GitHub release. A failed run means the website and
+# the release disagree (a changed website, or a new release not yet on the
+# website): GitHub e-mails the maintainer. This workflow only reads: it can
+# read the public release, nothing else, and cannot change the website.
+name: Website integrity check
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SITE: https://vaevictisos.org
+      REPO: linuxtuts-website/vaevictis-os
+      KEY_FPR: 0A41158C1DD6718D3D3FFED068486B39B2A99993
+      UA: "Mozilla/5.0 (compatible; vaevictis-site-check/1.0; +https://github.com/linuxtuts-website/vaevictis-os)"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Get the signed checksums of the latest release
+        run: |
+          set -euo pipefail
+          tag=$(gh release view --repo "$REPO" --json tagName -q .tagName)
+          [ -n "$tag" ] || { echo "::error::cannot find the latest release"; exit 1; }
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          mkdir -p rel
+          gh release download "$tag" --repo "$REPO" --dir rel \
+            --pattern SHA256SUMS --pattern SHA256SUMS.asc --pattern vaevictis-release-key.asc
+          export GNUPGHOME="$(mktemp -d)"
+          gpg --batch --quiet --import rel/vaevictis-release-key.asc
+          got=$(gpg --batch --with-colons --fingerprint | awk -F: '$1=="fpr"{print $10; exit}')
+          [ "$got" = "$KEY_FPR" ] || { echo "::error::the release key is $got, expected $KEY_FPR"; exit 1; }
+          gpg --batch --status-fd 1 --verify rel/SHA256SUMS.asc rel/SHA256SUMS 2>/dev/null \
+            | grep -Eq "^\[GNUPG:\] VALIDSIG .* $KEY_FPR\$" \
+            || { echo "::error::SHA256SUMS of $tag is not signed by $KEY_FPR"; exit 1; }
+          echo "Release $tag: SHA256SUMS correctly signed by $KEY_FPR"
+
+      - name: Compare the website with the release
+        run: |
+          python3 -I - <<'PY'
+          import os, re, sys, time, urllib.request
+          SITE, REPO, FPR, UA, TAG = (os.environ[k] for k in ("SITE", "REPO", "KEY_FPR", "UA", "TAG"))
+          sums = {}
+          for line in open("rel/SHA256SUMS"):
+              if line.strip():
+                  h, name = line.split()
+                  sums[name.lstrip("*")] = h.lower()
+          isos = [n for n in sums if n.endswith(".iso")]
+          if len(isos) != 1:
+              sys.exit("::error::SHA256SUMS of %s lists %d ISO files" % (TAG, len(isos)))
+          iso = isos[0]
+          dl_prefix = "https://github.com/%s/releases/download/%s/" % (REPO, TAG)
+          allowed = set(sums) | {"SHA256SUMS", "SHA256SUMS.asc", "vaevictis-release-key.asc"}
+          hex64 = re.compile(r"\b[0-9a-fA-F]{64}\b")
+          fprs = re.compile(r"\b(?:[0-9A-F]{4}\s+){9}[0-9A-F]{4}\b|\b[0-9A-F]{40}\b")
+          attr = re.compile(r"""(?:href|src|action)\s*=\s*["']([^"']*)["']""", re.I)
+          absurl = re.compile(r"""https?://[^\s"'<>()]+""", re.I)
+          looks_dl = re.compile(r"\.(?:iso|img|asc|sig|deb|torrent)(?:[?#]|$)|SHA256SUMS", re.I)
+          # the tamper demo swaps in a fake look-alike link on purpose: allowed only there
+          demo_file, demo_prefix = SITE + "/assets/tamper.js", "https://github-releases.net/"
+          errors, seen = [], set()
+
+          def get(url):
+              time.sleep(1)
+              req = urllib.request.Request(url, headers={"User-Agent": UA})
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return r.read().decode("utf-8", "replace")
+
+          def scan(url, text):
+              for h in hex64.findall(text):
+                  if h.lower() not in sums.values():
+                      errors.append("%s: SHA-256 %s is not in the signed SHA256SUMS" % (url, h))
+              for f in fprs.findall(text):
+                  if re.sub(r"\s", "", f) != FPR:
+                      errors.append("%s: unknown key fingerprint %s" % (url, f))
+              for link in set(attr.findall(text)) | set(absurl.findall(text)):
+                  if url.split("?")[0] == demo_file and link.startswith(demo_prefix):
+                      continue
+                  if looks_dl.search(link):
+                      name = link.split("?")[0].split("#")[0].rsplit("/", 1)[-1]
+                      if not link.startswith(dl_prefix) or name not in allowed:
+                          errors.append("%s: download link %s is not a file of release %s" % (url, link, TAG))
+
+          pages = set(re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", get(SITE + "/sitemap.xml"))) | {SITE + "/"}
+          for url in sorted(pages):
+              if not url.startswith(SITE + "/"):
+                  errors.append("sitemap.xml lists a foreign address: %s" % url)
+                  continue
+              try:
+                  html = get(url)
+              except Exception as e:
+                  errors.append("%s: %s" % (url, e))
+                  continue
+              scan(url, html)
+              if url == SITE + "/":
+                  if sums[iso] not in html.lower():
+                      errors.append("home page: the SHA-256 of %s is missing" % iso)
+                  if FPR not in re.sub(r"\s", "", html):
+                      errors.append("home page: the release key fingerprint is missing")
+                  if dl_prefix + iso not in html:
+                      errors.append("home page: the download link of %s is missing" % iso)
+              for src in attr.findall(html):
+                  if src.startswith("/") and not src.startswith("//") and src.split("?")[0].endswith(".js"):
+                      seen.add(SITE + src)
+          for js in sorted(seen):
+              try:
+                  scan(js, get(js))
+              except Exception as e:
+                  errors.append("%s: %s" % (js, e))
+
+          if errors:
+              for e in errors:
+                  print("::error::" + e)
+              sys.exit(1)
+          print("OK: %d pages and %d scripts match release %s (%s, %s)" % (len(pages), len(seen), TAG, iso, sums[iso]))
+          PY
